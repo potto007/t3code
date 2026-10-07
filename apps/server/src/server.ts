@@ -70,6 +70,9 @@ import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+import * as HandoffGit from "./peer/handoff/HandoffGit.ts";
+import * as HandoffImport from "./peer/handoff/HandoffImport.ts";
+import * as ThreadHandoff from "./peer/handoff/ThreadHandoff.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -735,6 +738,10 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  // Runs moves that waited for a turn to end, and settles any a restart cut short.
+  Layer.effectDiscard(
+    ThreadHandoff.ThreadHandoff.pipe(Effect.flatMap((handoff) => handoff.start_())),
+  ),
 ).pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
@@ -743,6 +750,14 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
   Layer.provide(PeerLinkRequests.layer),
+  // Moving a thread to a linked environment, from Settings, menus and agents,
+  // and applying one moved here (t3_thread_import).
+  Layer.provide(
+    Layer.merge(
+      ThreadHandoff.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+      HandoffImport.layer,
+    ).pipe(Layer.provideMerge(HandoffGit.layer)),
+  ),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
