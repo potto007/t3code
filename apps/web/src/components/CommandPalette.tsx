@@ -27,6 +27,7 @@ import {
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
@@ -63,6 +64,8 @@ import {
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
+  MonitorIcon,
+  MonitorUpIcon,
   PaletteIcon,
   RotateCcwIcon,
   SettingsIcon,
@@ -119,6 +122,7 @@ import {
 } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { readThreadHandoffTargets, startThreadHandoff } from "./threadHandoffMenu";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -1370,6 +1374,47 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (
+    activeThread !== null &&
+    activeThreadServerConfig?.environment.capabilities.peerLinks === true &&
+    (activeThread.handoff == null || activeThread.handoff.state === "failed")
+  ) {
+    const thread = activeThread;
+    actionItems.push({
+      kind: "action",
+      value: "action:continue-on",
+      searchTerms: ["continue on", "move", "hand off", "handoff", "environment", "machine"],
+      title: "Continue on…",
+      description: "Move this thread and its work to a linked environment",
+      disabled: !threadRuntimeCanArchive(thread.runtime),
+      icon: <MonitorUpIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        const targets = await readThreadHandoffTargets(thread.environmentId, thread.id);
+        pushPaletteView({
+          addonIcon: <MonitorUpIcon className={ADDON_ICON_CLASS} />,
+          groups: [
+            {
+              value: "handoff-targets",
+              label: targets.length === 0 ? "No linked environments answered" : "Continue on",
+              items: targets.map((target) => ({
+                kind: "action" as const,
+                value: `action:continue-on:${target.environmentId}`,
+                searchTerms: [target.label],
+                title: target.label,
+                ...(target.reason === null ? {} : { description: target.reason }),
+                disabled: target.reason !== null,
+                icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
+                run: () =>
+                  startThreadHandoff(thread.environmentId, thread.id, target.environmentId),
+              })),
+            },
+          ],
+        });
+      },
+    });
   }
 
   if (activeThread !== null && canShareActiveThreadWithGuest) {

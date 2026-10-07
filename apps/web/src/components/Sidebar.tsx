@@ -154,6 +154,11 @@ import {
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
+  readThreadHandoffSupported,
+  readThreadHandoffTargets,
+  startThreadHandoff,
+} from "./threadHandoffMenu";
+import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   buildBulkTitleRegenerationContextMenuItem,
@@ -2402,6 +2407,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        // Only an environment that can move threads makes the menu wait for targets.
+        const handoffTargets =
+          readThreadHandoffSupported(thread.environmentId) &&
+          (thread.handoff == null || thread.handoff.state === "failed")
+            ? await readThreadHandoffTargets(thread.environmentId, thread.id)
+            : [];
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2434,12 +2445,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              handoffTargets,
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        if (clicked.value?.startsWith("continue-on:")) {
+          await startThreadHandoff(
+            thread.environmentId,
+            thread.id,
+            clicked.value.slice("continue-on:".length),
+          );
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
