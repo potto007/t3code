@@ -1833,6 +1833,8 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread || activeThreadId === null) {
       throw new Error("Messages from apps need a started thread.");
     }
+    const handoffBlockReason = threadHandoffSendBlockReason(activeThreadShell);
+    if (handoffBlockReason !== null) throw new Error(handoffBlockReason);
     const result = await startThreadTurn({
       environmentId,
       input: {
@@ -2599,28 +2601,28 @@ export default function ChatView(props: ChatViewProps) {
     const backgroundWorkItems = [childInputBanner, goalBanner, backgroundWorkBanner].filter(
       (item) => item !== null,
     );
-    // The user asked for this one, so it leads the notice tier instead of trailing it.
     const handoffItems = threadHandoffBannerItem === null ? [] : [threadHandoffBannerItem];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
-        ...handoffItems,
         ...feedbackBannerItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
         ...systemComposerBannerItems,
+        // After the system notices, so a reconnect or update notice wins a priority tie.
+        ...handoffItems,
         ...backgroundWorkItems,
       ];
     }
     return [
-      ...handoffItems,
       ...feedbackBannerItems,
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
       ...systemComposerBannerItems,
+      ...handoffItems,
       ...backgroundWorkItems,
       branchMismatchBannerItem({
         mismatchKey: activeBranchMismatchKey,
