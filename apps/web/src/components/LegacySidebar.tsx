@@ -2886,7 +2886,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   return (
     <SidebarContent
       fixedHeader={
-        <SidebarGroup ref={listenForOutsideSelectionClear} className="z-[1]">
+        <SidebarGroup className="z-[1]">
           <SidebarMenu>
             <SidebarMenuItem>
               <CommandDialogTrigger
@@ -3276,13 +3276,6 @@ function clearThreadSelectionOnOutsideMouseDown(event: globalThis.MouseEvent) {
   if (shouldClearThreadSelectionOnMouseDown(target)) selection.clearSelection();
 }
 
-// Module-level so the listener lives as long as the sidebar, not as long as
-// one render's thread key lists.
-function listenForOutsideSelectionClear() {
-  window.addEventListener("mousedown", clearThreadSelectionOnOutsideMouseDown);
-  return () => window.removeEventListener("mousedown", clearThreadSelectionOnOutsideMouseDown);
-}
-
 export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const navigate = useNavigate();
@@ -3521,6 +3514,11 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
     return () => {
       window.removeEventListener("keydown", handleWindowKeyDown);
     };
+  }, []);
+  // A window listener whose lifetime is the sidebar's: no element owns outside clicks.
+  useEffect(() => {
+    window.addEventListener("mousedown", clearThreadSelectionOnOutsideMouseDown);
+    return () => window.removeEventListener("mousedown", clearThreadSelectionOnOutsideMouseDown);
   }, []);
 
   const desktopUpdateButtonDisabled = isDesktopUpdateButtonDisabled(desktopUpdateState);

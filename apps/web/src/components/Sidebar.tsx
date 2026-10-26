@@ -767,6 +767,8 @@ const SIDEBAR_DRAG_DISTANCE = 6;
 
 const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
 
+const threadSearchResultId = (index: number) => `sidebar-thread-search-result-${index}`;
+
 // Continuations that outlive a render read the open thread from the router.
 function readRouteThreadKey(router: AnyRouter): string | null {
   const target = resolveThreadRouteTarget(router.state.matches.at(-1)?.params ?? {});
@@ -977,8 +979,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
-  // thread once. Render only reads the reveal record; the active row's ref callback
-  // settles it at commit, so a reveal costs no extra render.
+  // thread once. Render decides the widening, so the first frame of the new route
+  // already lists the row; the active row's ref callback scrolls to it.
   const { widensScope: revealWidensScope } = resolveSidebarRouteReveal({
     reveal: routeReveal,
     routeKey: routeRowThreadKey,
@@ -986,22 +988,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     scopedProjectKeys: chosenScopeProjectKeys,
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
-  // The row renders under the widened scope, and revealing it keeps that scope.
   const projectScopeKey = revealWidensScope ? null : chosenProjectScopeKey;
+  // The widened scope outlives the reveal, so it is written back to the persisted
+  // scope. Route changes arrive from history, links and the palette, and only this
+  // component holds the project groups that decide a widening, so no single
+  // navigation handler can make the write.
+  useEffect(() => {
+    if (!revealWidensScope) return;
+    clearSelection();
+    setPersistedProjectScopeKey(null);
+  }, [clearSelection, revealWidensScope, setPersistedProjectScopeKey]);
   const mountRevealOwed = useRef(true);
-  // Both callbacks keep their identity across route changes, so a switch re-renders
-  // only the rows whose active state changed.
-  const revealRouteRow = (row: HTMLElement, rowKey: string, widensScope: boolean) => {
+  const revealActiveRow = (row: HTMLElement, rowKey: string) => {
     const pendingKey = pendingSidebarRouteReveal(routeReveal, rowKey);
     if (pendingKey === null && !mountRevealOwed.current) return;
-    if (widensScope) setProjectScopeKey(null);
     completeSidebarRouteReveal(routeReveal);
     mountRevealOwed.current = false;
     row.scrollIntoView({ block: "nearest" });
   };
-  const revealActiveRow = (row: HTMLElement, rowKey: string) => revealRouteRow(row, rowKey, false);
-  const revealActiveRowWideningScope = (row: HTMLElement, rowKey: string) =>
-    revealRouteRow(row, rowKey, true);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
@@ -1200,6 +1204,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         typeof index === "function" ? index(activeSearchResultIndex) : index
       ] ?? null,
     );
+  // Arrow keys can move the highlight past the scrolled edge of the results.
+  const moveSearchHighlight = (step: 1 | -1) => {
+    const count = threadSearchResults.length;
+    const index = (activeSearchResultIndex + step + count) % count;
+    setActiveSearchResultIndex(index);
+    document.getElementById(threadSearchResultId(index))?.scrollIntoView({ block: "nearest" });
+  };
 
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   // Read changing maps/sets through refs so streamed events preserve row callbacks.
@@ -1288,14 +1299,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (threadSearchResults.length === 0) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveSearchResultIndex((index) => (index + 1) % threadSearchResults.length);
+      moveSearchHighlight(1);
       return;
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveSearchResultIndex(
-        (index) => (index - 1 + threadSearchResults.length) % threadSearchResults.length,
-      );
+      moveSearchHighlight(-1);
       return;
     }
     if (event.key === "Enter") {
@@ -2878,7 +2887,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         }
                         isHighlighted={activeSearchResultIndex === index}
                         isRouteActive={routeRowThreadKey === threadKey}
-                        resultId={`sidebar-thread-search-result-${index}`}
+                        resultId={threadSearchResultId(index)}
                         searchMatch={
                           threadSearchMatchByKey.get(
                             threadSearchMatchKey({
@@ -2998,11 +3007,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                             isActive={routeRowThreadKey === threadKey}
                             revealRef={
-                              routeRowThreadKey !== threadKey
-                                ? undefined
-                                : revealWidensScope
-                                  ? revealActiveRowWideningScope
-                                  : revealActiveRow
+                              routeRowThreadKey === threadKey ? revealActiveRow : undefined
                             }
                             isRouteThread={routeThreadKey === threadKey}
                             openPullRequestsInRightPanel={routeThreadRef !== null}

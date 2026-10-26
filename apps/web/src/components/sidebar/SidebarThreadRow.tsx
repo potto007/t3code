@@ -1610,11 +1610,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
         <TooltipTrigger
           render={
             <button
-              ref={(node) => {
-                // Arrow keys move the highlight past the scrolled edge of the results.
-                if (node && props.isHighlighted) node.scrollIntoView({ block: "nearest" });
-                return rowRef(node);
-              }}
+              ref={rowRef}
               id={props.resultId}
               type="button"
               role="option"

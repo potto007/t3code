@@ -26,6 +26,8 @@ describe("useSnoozeWakeClock", () => {
     const resumedAtMs = MOUNTED_AT_MS + 24 * 60 * 60_000;
     now.mockReturnValue(resumedAtMs);
 
-    await expect.element(screen.getByRole("status")).toHaveTextContent(String(resumedAtMs));
+    // The clock lands on the last elapsed wake, so every woken thread has left the shelf.
+    const lastWakeMs = MOUNTED_AT_MS + 1 + 39 * 60_000;
+    await expect.element(screen.getByRole("status")).toHaveTextContent(String(lastWakeMs));
   });
 });

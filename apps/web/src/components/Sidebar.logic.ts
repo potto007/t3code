@@ -31,6 +31,7 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
+import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 
 export function shouldNavigateAfterThreadPark(input: {
@@ -103,7 +104,13 @@ function clearFileDrags() {
  */
 export function setFileDragActive(setActive: (active: boolean) => void, active: boolean) {
   setActive(active);
-  if (!active || typeof window === "undefined") return;
+  if (typeof window === "undefined") return;
+  if (!active) {
+    if (fileDragClears.delete(setActive) && fileDragClears.size === 0) {
+      window.removeEventListener("dragend", clearFileDrags);
+    }
+    return;
+  }
   if (fileDragClears.size === 0) window.addEventListener("dragend", clearFileDrags, { once: true });
   fileDragClears.add(setActive);
 }
@@ -116,17 +123,23 @@ export function useSnoozeWakeClock(
   threads: ReadonlyArray<{ readonly snoozedUntil?: string | null | undefined }>,
 ): number {
   const [clockMs, setClockMs] = React.useState(() => Date.now());
+  const wakeTimes: number[] = [];
   let nextWakeAt: number | null = null;
   for (const thread of threads) {
     const wakeAt = thread.snoozedUntil == null ? Number.NaN : Date.parse(thread.snoozedUntil);
-    if (wakeAt > clockMs && (nextWakeAt === null || wakeAt < nextWakeAt)) nextWakeAt = wakeAt;
+    if (!(wakeAt > clockMs)) continue;
+    wakeTimes.push(wakeAt);
+    if (nextWakeAt === null || wakeAt < nextWakeAt) nextWakeAt = wakeAt;
   }
   const woke = useDeadlinePassed(nextWakeAt);
-  // Jumping to now (read only once a wake passed, like useNowAfter) skips every
-  // wake that elapsed meanwhile, e.g. across a laptop sleep. Stepping one wake
-  // at a time would re-render once per elapsed wake and hit React's limit.
+  // Advancing to the latest wake that has passed skips every wake that elapsed
+  // meanwhile, e.g. across a laptop sleep. Stepping one wake at a time would
+  // re-render once per elapsed wake and hit React's limit.
   if (woke && nextWakeAt !== null) {
-    const nextClockMs = Math.max(nextWakeAt, Date.now());
+    let nextClockMs = nextWakeAt;
+    for (const wakeAt of wakeTimes) {
+      if (wakeAt > nextClockMs && deadlineStore(wakeAt).getSnapshot()) nextClockMs = wakeAt;
+    }
     setClockMs(nextClockMs);
     return nextClockMs;
   }
@@ -658,7 +671,7 @@ type ThreadStatusInput = Pick<
 export function useThreadJumpHintsVisible(shouldShow: boolean): boolean {
   const [showAt, setShowAt] = React.useState<number | null>(null);
   let nextShowAt = shouldShow ? showAt : null;
-  if (shouldShow && showAt === null) nextShowAt = Date.now() + THREAD_JUMP_HINT_SHOW_DELAY_MS;
+  if (shouldShow && showAt === null) nextShowAt = deadlineAfter(THREAD_JUMP_HINT_SHOW_DELAY_MS);
   if (nextShowAt !== showAt) setShowAt(nextShowAt);
   return useDeadlinePassed(nextShowAt);
 }
