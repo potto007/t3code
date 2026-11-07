@@ -279,7 +279,10 @@ export const make = Effect.fn("VoicePack.make")(function* (options: VoicePackOpt
         // A GPU build that fails here would fail every call; record it and run on the CPU.
         const ran = yield* Effect.tryPromise({
           try: (signal) => probe(staging, plan.variant, signal, libraryPath(staging, plan.variant)),
-          catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+          catch: (cause) =>
+            (cause instanceof Error ? cause.message : String(cause))
+              .split("\n")[0]!
+              .replace(/^Error: /, ""),
         }).pipe(
           Effect.match({
             onSuccess: (gpu) => (gpu === plan.variant ? undefined : `The build ran on ${gpu}.`),

@@ -165,7 +165,10 @@ it.layer(services)("VoicePack", (it) => {
     Effect.gen(function* () {
       const pack = yield* open({
         probe: async () => {
-          throw new Error("libcudart.so.13: cannot open shared object file");
+          // The worker reports a stack, which the row must not show.
+          throw new Error(
+            "Error: libcudart.so.13: cannot open shared object file\n    at probe (file:///[eval1]:25:19)",
+          );
         },
       });
       expect(yield* pack.download("auto")).toMatchObject({
