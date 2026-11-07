@@ -129,6 +129,32 @@ word or phrase you say to flag a correction, such as "scratch that". Cleanup
 applies the correction only where the context shows one and drops the cue, and
 the model hears the cue as a dictionary hint.
 
+## Talk in a voice call
+
+On web and desktop, press **Start voice** in a thread's composer, or run **Start
+voice call** from the command palette, and talk. A small model on the thread's
+environment answers small talk itself, sends real work to the thread's agent as
+an ordinary message, and reads back a short summary when the agent finishes. You
+can talk over it to interrupt. The call strip shows what it heard and said, with
+**Mute** and **Stop**.
+
+- A call runs on the thread's environment, so **Transcribe with** in
+  **Settings → Voice** must name that environment. Calls don't use cloud
+  transcription.
+- Use headphones if you can. Echo cancellation keeps the voice out of your
+  microphone on most speakers, but loud speakers or a laptop on a desk can still
+  let it hear itself.
+- While a call runs, dictation on that environment waits: both use the same
+  speech model.
+- The call hangs up after a quiet stretch (10 minutes by default), when you close
+  the tab, or when the connection drops.
+
+Under **Settings → Voice → Conversation**, pick the **Voice**, when to **Hang up
+when quiet**, and the **Conversation model**: a managed model the environment
+downloads on first use, or an OpenAI-compatible server you already run. Voice
+calls are not available on iPhone and Android yet. There is no default shortcut;
+bind **Composer: Start or Stop Voice Call** in **Settings → Keybindings**.
+
 ## Test and troubleshoot
 
 In **Settings → Voice**, **Test microphone** beside the microphone selector

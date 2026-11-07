@@ -8,7 +8,8 @@ also lists the command IDs and defaults available in your version.
 `mod+shift+d` starts dictation in the focused editor, or the composer, and finishes it on the next press;
 `Esc` discards the recording. Change the chord under **Composer: Start or Finish
 Dictation**, and the hold or toggle behavior in **Settings → Voice**. See
-[Voice input](./voice-input.md).
+[Voice input](./voice-input.md). **Composer: Start or Stop Voice Call** has no
+default chord; bind one to start and end a [voice call](./voice-input.md#talk-in-a-voice-call).
 
 In **Settings → Chat → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
