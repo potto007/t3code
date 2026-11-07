@@ -79,6 +79,7 @@ const fakeCalls = Effect.fn("test.callSocket.fakeCalls")(function* () {
           played: (seq, sample) => Effect.sync(() => void log.push(`played ${seq} ${sample}`)),
           mute: Effect.sync(() => void log.push("mute")),
           unmute: Effect.sync(() => void log.push("unmute")),
+          answer: (id, confirm) => Effect.sync(() => void log.push(`answer ${id} ${confirm}`)),
           ended: Deferred.await(idle),
         };
       }),
@@ -136,6 +137,7 @@ it.live("runs a call over the socket and frees it when the client hangs up", () 
       connection.command({ type: "played", seq: 1, sample: 1 });
       connection.command({ type: "mute" });
       connection.command({ type: "unmute" });
+      connection.command({ type: "answer", id: 2, confirm: true });
       connection.socket.close();
       await connection.closed;
     });
@@ -146,6 +148,7 @@ it.live("runs a call over the socket and frees it when the client hangs up", () 
       "played 1 1",
       "mute",
       "unmute",
+      "answer 2 true",
     ]);
   }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );

@@ -67,6 +67,7 @@ export const runVoiceCallSocket = Effect.fn("voice.runCallSocket")(function* (
         }
         if (!call) return yield* fail("Start the voice call first.");
         if (command.type === "played") return yield* call.played(command.seq, command.sample);
+        if (command.type === "answer") return yield* call.answer(command.id, command.confirm);
         return yield* command.type === "mute" ? call.mute : call.unmute;
       }
       if (data.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES || data.byteLength % 4 !== 0)

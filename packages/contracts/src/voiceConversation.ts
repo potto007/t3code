@@ -50,17 +50,25 @@ export const VoiceConversationCommand = Schema.Union([
   /** Keep streaming mic frames while muted: they count toward the idle timeout unheard. */
   Schema.Struct({ type: Schema.Literal("mute") }),
   Schema.Struct({ type: Schema.Literal("unmute") }),
+  /** Confirm or Cancel for the `confirm` event with this id, the same as saying yes or no. */
+  Schema.Struct({
+    type: Schema.Literal("answer"),
+    id: Schema.Int,
+    confirm: Schema.Boolean,
+  }),
   Schema.Struct({ type: Schema.Literal("stop") }),
 ]);
 export type VoiceConversationCommand = typeof VoiceConversationCommand.Type;
 
 // First that applies: `speaking` while voice audio is queued, rendering, or not yet acked as
 // played (leaving it is the "done speaking" signal); `thinking` while answering or reading
-// back a run; `delegated` while a run the call started works; else `listening`.
+// back a run; `confirming` while an outward request waits for a yes; `delegated` while a run
+// the call started works; else `listening`.
 export const VoiceConversationState = Schema.Literals([
   "listening",
   "thinking",
   "speaking",
+  "confirming",
   "delegated",
 ]);
 export type VoiceConversationState = typeof VoiceConversationState.Type;
@@ -87,6 +95,12 @@ export const VoiceConversationEvent = Schema.Union([
   }),
   /** Drop this seq's audio and every earlier seq's, including anything already buffered. */
   Schema.Struct({ type: Schema.Literal("cut"), seq: Schema.Int }),
+  /**
+   * A request that would act outside the checkout waits for a yes; nothing is sent until
+   * then. `text` is the readback the voice speaks. A `confirmed` with the same id ends it.
+   */
+  Schema.Struct({ type: Schema.Literal("confirm"), id: Schema.Int, text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("confirmed"), id: Schema.Int, sent: Schema.Boolean }),
   /** The call sent `text` to the thread, which is running it as `runId`. */
   Schema.Struct({ type: Schema.Literal("delegated"), runId: RunId, text: Schema.String }),
   Schema.Struct({ type: Schema.Literal("idle") }),

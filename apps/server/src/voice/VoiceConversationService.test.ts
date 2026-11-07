@@ -7,7 +7,6 @@ import {
   MessageId,
   ProjectId,
   ProviderDriverKind,
-  ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
   ThreadId,
@@ -22,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
+import { DEV_REPLAY_INSTANCE_ID } from "../provider/ProviderInstanceRegistryHydration.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -38,7 +38,8 @@ import type { VoiceCallOutput } from "./speaker.ts";
 import * as VoiceConversationService from "./VoiceConversationService.ts";
 
 const driver = ProviderDriverKind.make("codex");
-const instanceId = ProviderInstanceId.make("codex");
+// The scripted agent registers as Replay (dev): a call delegates for real.
+const instanceId = DEV_REPLAY_INSTANCE_ID;
 const modelSelection = { instanceId, model: "test-model" };
 const CHUNK = 8000;
 
@@ -172,7 +173,11 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
     layerOrchestrator,
     ThreadManagementService.layer.pipe(
       Layer.provide(layerOrchestrator),
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        ServerSettings.layerTest({
+          providerInstances: { [instanceId]: { driver, displayName: "Replay (dev)" } },
+        }),
+      ),
       Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
     ),
   );
@@ -288,6 +293,11 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
       createdBy: "user",
       creationSource: "web",
     });
+    // A call sends the user's words to the thread's provider, so only Replay (dev) may answer.
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const target = yield* threads.getThreadRecords(threadId, []);
+    if (target.thread.modelSelection.instanceId !== DEV_REPLAY_INSTANCE_ID)
+      return yield* Effect.die(`Thread ${threadId} is not on Replay (dev).`);
     const outputs = yield* Queue.unbounded<VoiceCallOutput>();
     const service = yield* VoiceConversationService.VoiceConversationService;
     const voice = yield* service.start({
@@ -525,5 +535,77 @@ it.effect("ignores the mic while muted and ends an idle call by audio", () =>
       }).pipe(Effect.provide(test.layer)),
     );
     assert.deepStrictEqual(test.held, { stt: 0, tts: 0, front: 0 });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("sends an outward request only after a spoken yes", () =>
+  Effect.gen(function* () {
+    const test = yield* harness("confirm", ["Opened pull request 7."]);
+    yield* Effect.gen(function* () {
+      const { voice, until, say, pause, rendered } = yield* test.call();
+      /** Plays a whole utterance through and returns the outputs up to its speak. */
+      const hear = Effect.fn("test.voiceCall.hear")(function* (start: string) {
+        const taken = yield* until(
+          (output) => output.type === "speak" && output.text.startsWith(start),
+        );
+        const speak = taken.at(-1)!;
+        if (speak.type !== "speak") throw new Error("unreachable");
+        yield* rendered(speak.seq, 1);
+        yield* voice.played(speak.seq, 1_000_000);
+        return taken;
+      });
+      const ask = Effect.fn("test.voiceCall.ask")(function* () {
+        yield* say("open a pull request");
+        yield* test.decide({
+          action: "delegate",
+          speech: "On it.",
+          task: "Open a pull request.",
+          outward: true,
+        });
+        yield* pause(1500);
+        const asked = yield* hear("Send");
+        assert.deepStrictEqual(
+          asked.filter((output) => output.type === "confirm").map((output) => output.text),
+          ['Send "Open a pull request" to the agent on Voice call?'],
+        );
+        assert.isFalse(asked.some((output) => output.type === "speak" && output.text === "On it."));
+        yield* until(isState("confirming"));
+      });
+
+      yield* ask();
+      yield* say("no");
+      yield* pause(1500);
+      const declined = yield* until((output) => output.type === "confirmed");
+      assert.deepStrictEqual(declined.at(-1), { type: "confirmed", id: 1, sent: false });
+      yield* hear("Okay, I won't");
+      yield* until(isState("listening"));
+
+      yield* ask();
+      yield* pause(7500);
+      assert.isFalse(test.prompts.length > 0);
+      yield* pause(500);
+      const timedOut = yield* until((output) => output.type === "confirmed");
+      assert.deepStrictEqual(timedOut.at(-1), { type: "confirmed", id: 2, sent: false });
+      yield* hear("I didn't hear a yes");
+      yield* until(isState("listening"));
+      // Neither answer reached the agent, and none of them went to the front.
+      assert.deepStrictEqual(test.prompts, []);
+      assert.strictEqual(test.asked.length, 2);
+
+      yield* ask();
+      yield* say("yes go ahead");
+      yield* pause(1500);
+      const sent = yield* until((output) => output.type === "delegated");
+      assert.deepStrictEqual(
+        sent.find((output) => output.type === "confirmed"),
+        { type: "confirmed", id: 3, sent: true },
+      );
+      assert.deepStrictEqual(spoken(sent), ["On it."]);
+      yield* test.decide({ action: "reply", speech: "Pull request 7 is open." });
+      yield* until((output) => output.type === "speak" && output.text.startsWith("Pull request"));
+      assert.deepStrictEqual(test.prompts, [
+        "open a pull request\n\nVoice assistant's reading: Open a pull request.",
+      ]);
+    }).pipe(Effect.provide(test.layer));
   }).pipe(Effect.scoped),
 );

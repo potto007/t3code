@@ -19,6 +19,15 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as SpeechService from "../speech/SpeechService.ts";
 import * as TextToSpeech from "../speech/TextToSpeech.ts";
 import { DEFAULT_TURN_SETTINGS, makeTurnDetector } from "../speech/turns.ts";
+import {
+  cancelSpeech,
+  confirmationReadback,
+  isOutwardRequest,
+  startConfirmation,
+  stepConfirmation,
+  type Confirmation,
+  type ConfirmationEvent,
+} from "./confirmation.ts";
 import * as FrontModel from "./FrontModel.ts";
 import {
   delegationText,
@@ -61,6 +70,8 @@ export type VoiceCall = {
   readonly played: (seq: number, sample: number) => Effect.Effect<void>;
   readonly mute: Effect.Effect<void, VoiceCallError>;
   readonly unmute: Effect.Effect<void>;
+  /** The client's Confirm or Cancel for confirmation `id`; a stale id does nothing. */
+  readonly answer: (id: number, confirm: boolean) => Effect.Effect<void>;
   /** Completes when the call ends itself: `idle` after the idle timeout. */
   readonly ended: Effect.Effect<"idle">;
 };
@@ -102,6 +113,7 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new VoiceCallError({ operation: "thread", cause })),
     );
     const thread = { projectId: target.thread.projectId, threadId };
+    const where = `the agent on ${target.thread.title}`;
     const [stt, , front] = yield* Effect.all(
       [
         speech
@@ -140,15 +152,28 @@ const make = Effect.gen(function* () {
     const notes: string[] = [];
     const runs = new Set<RunId>();
     let playedWords: { word: string; at: number }[] = [];
+    /** An outward request held until the user says yes; it is sent only from `confirm`. */
+    let confirming:
+      | {
+          readonly id: number;
+          state: Confirmation;
+          readonly acknowledgement: string;
+          readonly notes: readonly string[];
+          readonly send: Effect.Effect<void>;
+        }
+      | undefined;
+    let confirmations = 0;
 
     const refresh: Effect.Effect<void> = Effect.suspend(() => {
       const next: VoiceConversationState = speaker.busy()
         ? "speaking"
         : thinking
           ? "thinking"
-          : runs.size > 0
-            ? "delegated"
-            : "listening";
+          : confirming
+            ? "confirming"
+            : runs.size > 0
+              ? "delegated"
+              : "listening";
       if (next === state) return Effect.void;
       state = next;
       return send({ type: "state", state: next });
@@ -231,26 +256,89 @@ const make = Effect.gen(function* () {
       );
     });
 
+    // A failed send is told to the user: it may run outside any front turn.
+    const sendSafely = <E>(send: Effect.Effect<void, E>) =>
+      send.pipe(
+        Effect.catch((cause) =>
+          Effect.logError("voice call send failed", { cause }).pipe(
+            Effect.andThen(speaker.speak("Sorry, that didn't work. Please try again.")),
+            Effect.asVoid,
+          ),
+        ),
+      );
     const act = Effect.fn("VoiceConversationService.act")(function* (
       decision: FrontModel.FrontDecision,
       inputs: readonly FrontInput[],
     ) {
       const speech = limitSpeech(decision.speech);
-      if (speech) yield* speaker.speak(speech);
       const said = inputs.flatMap((input) => (input.type === "user" ? [input.text] : [])).join(" ");
       // Only the user starts work: acting on a bare agent result would loop run after run.
-      if (!said) return;
-      if (decision.action === "note") yield* deliverNote(decision.task?.trim() || said);
-      if (decision.action !== "delegate") return;
-      const text = delegationText({ words: said, task: decision.task, notes: notes.splice(0) });
-      const sent = yield* sendToThread(text, "auto");
-      yield* send({ type: "delegated", runId: sent.run.id, text });
-      yield* follow(sent.run.id);
+      const steersNote = decision.action === "note" && runs.size > 0;
+      if (!said || !(decision.action === "delegate" || steersNote)) {
+        if (speech) yield* speaker.speak(speech);
+        if (said && decision.action === "note") yield* deliverNote(decision.task?.trim() || said);
+        return;
+      }
+      const task = decision.task?.trim() || said;
+      const taken = decision.action === "delegate" ? notes.splice(0) : [];
+      const deliver =
+        decision.action === "delegate"
+          ? Effect.gen(function* () {
+              const text = delegationText({ words: said, task: decision.task, notes: taken });
+              const sent = yield* sendToThread(text, "auto");
+              yield* send({ type: "delegated", runId: sent.run.id, text });
+              yield* follow(sent.run.id);
+            })
+          : deliverNote(task);
+      const outward =
+        decision.outward === true || [said, task, ...taken].some((text) => isOutwardRequest(text));
+      if (!outward) {
+        if (speech) yield* speaker.speak(speech);
+        return yield* deliver;
+      }
+      const id = ++confirmations;
+      confirming = {
+        id,
+        state: startConfirmation(),
+        acknowledgement: speech || "On it.",
+        notes: taken,
+        send: sendSafely(deliver),
+      };
+      const readback = confirmationReadback({ task, where });
+      yield* send({ type: "confirm", id, text: readback });
+      yield* speaker.speak(readback);
+    });
+    /** Applies one event to the pending confirmation; only a `send` step sends. */
+    const confirm = Effect.fn("VoiceConversationService.confirm")(function* (
+      event: ConfirmationEvent,
+    ) {
+      const current = confirming;
+      if (!current) return;
+      const step = stepConfirmation(current.state, event);
+      if (step.type === "pending") {
+        current.state = step.confirmation;
+        return;
+      }
+      confirming = undefined;
+      yield* send({ type: "confirmed", id: current.id, sent: step.type === "send" });
+      if (event.type === "hangUp") return;
+      if (speaker.busy() && !interruption) yield* speaker.cut;
+      if (step.type === "send") {
+        yield* speaker.speak(current.acknowledgement);
+        yield* current.send;
+      } else {
+        notes.unshift(...current.notes);
+        yield* speaker.speak(cancelSpeech(step.reason));
+        if (step.words) pending.push({ type: "user", text: step.words });
+      }
+      yield* think;
+      yield* refresh;
     });
 
     // The front answers once the user has finished: what they say next joins this turn.
     const think: Effect.Effect<void> = Effect.suspend(() => {
-      if (thinking || pending.length === 0 || utterance.heard || interruption) return Effect.void;
+      if (thinking || confirming || pending.length === 0 || utterance.heard || interruption)
+        return Effect.void;
       const inputs = nextTurn(pending);
       pending = pending.slice(inputs.length);
       return Effect.gen(function* () {
@@ -296,6 +384,11 @@ const make = Effect.gen(function* () {
       detector.reset();
       return text;
     });
+    // While a request waits for a yes, the user's next words answer it instead of the front.
+    const heard = Effect.fn("VoiceConversationService.heard")(function* (text: string) {
+      if (!confirming) return void pending.push({ type: "user", text });
+      yield* confirm({ type: "utterance", text, echo: heardOnlyEcho(text, echo()) });
+    });
     const listen = Effect.fn("VoiceConversationService.listen")(function* (pcm: Uint8Array) {
       const update = yield* stt.feed(pcm);
       if (update.text) {
@@ -336,13 +429,14 @@ const make = Effect.gen(function* () {
         if (verdict === "turn") {
           if (interruption.rest === undefined) yield* speaker.cut;
           interruption = undefined;
+          yield* confirm({ type: "bargeIn" });
         }
       }
       if (turn.ended) {
         const text = (yield* nextUtterance()).trim();
         if (text) {
           yield* send({ type: "caption", who: "you", committed: text, tentative: "" });
-          pending.push({ type: "user", text });
+          yield* heard(text);
         }
       }
       yield* think;
@@ -355,6 +449,12 @@ const make = Effect.gen(function* () {
           const samples = pcm.byteLength / 4;
           clock += samples;
           const turn = muted ? undefined : yield* listen(pcm);
+          yield* confirm({
+            type: "audio",
+            samples,
+            voicePlaying: speaker.busy(),
+            userSpeaking: turn?.heard === true || utterance.text.trim() !== "" || !!interruption,
+          });
           silent = turn?.heard || state !== "listening" ? 0 : silent + samples;
           if (silent >= idleSamples) {
             yield* send({ type: "idle" });
@@ -383,8 +483,12 @@ const make = Effect.gen(function* () {
       unmute: Effect.sync(() => {
         muted = false;
       }),
+      answer: (id, yes) =>
+        confirming?.id === id ? confirm({ type: "answer", confirm: yes }) : Effect.void,
       ended: Deferred.await(ended),
     };
+    // A hang-up drops a request still waiting for its yes.
+    yield* Scope.addFinalizer(scope, confirm({ type: "hangUp" }));
     yield* send({ type: "ready" });
     yield* refresh;
     return call;
