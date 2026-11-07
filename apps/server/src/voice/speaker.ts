@@ -6,6 +6,7 @@ import * as Stream from "effect/Stream";
 
 import { splitSentences } from "../speech/sentences.ts";
 import type * as TextToSpeech from "../speech/TextToSpeech.ts";
+import { speakableText } from "./speakable.ts";
 import { splitAtCursor, words, type SpokenSentence } from "./turnTaking.ts";
 
 /** Half a second of 24 kHz audio, so a cut takes effect between frames. */
@@ -93,7 +94,10 @@ export const makeSpeaker = Effect.fn("VoiceSpeaker.make")(function* (input: {
     /** Speaking, in the contract's sense: queued, rendering, or not yet heard to the end. */
     busy: () =>
       live().some((utterance) => !utterance.rendered || utterance.played < utterance.sent),
-    speak: Effect.fn("VoiceSpeaker.speak")(function* (text: string) {
+    /** Every spoken text passes here, so markdown is stripped once for all of them. */
+    speak: Effect.fn("VoiceSpeaker.speak")(function* (markdown: string) {
+      const text = speakableText(markdown);
+      if (!text) return undefined;
       const utterance: Utterance = {
         seq: ++lastSeq,
         text,
