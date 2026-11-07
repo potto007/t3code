@@ -143,23 +143,29 @@ export const make = Effect.fn("FrontModel.make")(function* (
       });
     return yield* exit;
   });
-  const workers = yield* RcMap.make({
-    lookup: Effect.fn("FrontModel.load")(function* (model: FrontModelEntry) {
-      const path = yield* install(model);
-      // Held for the worker's life, so an upgrade never deletes files it has loaded.
-      const pack = yield* voicePack.use.pipe(
-        Effect.mapError(
-          (cause) => new FrontModelError({ operation: "load", detail: cause.detail, cause }),
-        ),
-      );
-      return yield* Effect.acquireRelease(
-        Effect.tryPromise({
-          try: (signal) => load(path, signal, pack),
-          catch: (cause) => new FrontModelError({ operation: "load", cause }),
-        }),
-        (loaded) => Effect.promise(() => loaded.dispose()),
-      );
-    }),
+  const workers: RcMap.RcMap<FrontModelEntry, FrontLlama, FrontModelError> = yield* RcMap.make({
+    lookup: Effect.fn("FrontModel.load")(
+      function* (model: FrontModelEntry) {
+        const path = yield* install(model);
+        // Held for the worker's life, so an upgrade never deletes files it has loaded.
+        const pack = yield* voicePack.use.pipe(
+          Effect.mapError(
+            (cause) => new FrontModelError({ operation: "load", detail: cause.detail, cause }),
+          ),
+        );
+        return yield* Effect.acquireRelease(
+          Effect.tryPromise({
+            try: (signal) => load(path, signal, pack),
+            catch: (cause) => new FrontModelError({ operation: "load", cause }),
+          }),
+          (loaded) => Effect.promise(() => loaded.dispose()),
+        );
+      },
+      (effect, model) =>
+        // RcMap keeps a failed lookup until it idles out, even when its caller was interrupted.
+        // Evict it so the next call retries, such as once the voice pack has downloaded.
+        Effect.tapError(effect, () => RcMap.invalidate(workers, model)),
+    ),
     idleTimeToLive: IDLE_UNLOAD,
   });
   const acquire = Effect.fn("FrontModel.acquire")(function* () {

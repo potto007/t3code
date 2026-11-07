@@ -81,6 +81,56 @@ it.effect("loads a managed model once per call and unloads it after idling", () 
   }).pipe(Effect.provide(services("unsloth/Qwen3-1.7B-GGUF")));
 });
 
+it.effect("retries a failed load on the next call instead of caching the failure", () => {
+  let attempts = 0;
+  const load = async (): Promise<FrontLlama> => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("no voice pack yet");
+    return { gpu: "cpu", decide: async () => "{}", dispose: async () => {} };
+  };
+  return Effect.gen(function* () {
+    const front = yield* FrontModel.make(load);
+    yield* Effect.flip(Effect.scoped(front.acquire));
+    yield* Effect.scoped(front.acquire);
+    expect(attempts).toBe(2);
+  }).pipe(Effect.provide(services("unsloth/Qwen3-1.7B-GGUF")));
+});
+
+it.effect("a call interrupted before the voice pack existed doesn't block later calls", () => {
+  let packs = 0;
+  return Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const missing = yield* Deferred.make<void, VoicePack.VoicePackError>();
+    const evicted = yield* Deferred.make<void>();
+    const pack = Layer.mock(VoicePack.VoicePack)({
+      use: Effect.suspend(() =>
+        ++packs === 1
+          ? Effect.addFinalizer(() => Deferred.succeed(evicted, undefined)).pipe(
+              Effect.andThen(Deferred.succeed(started, undefined)),
+              Effect.andThen(Deferred.await(missing)),
+              Effect.as({ root: "", gpu: "auto" as const }),
+            )
+          : Effect.succeed({ root: "/voice-pack", gpu: "auto" as const }),
+      ),
+    });
+    yield* Effect.gen(function* () {
+      const front = yield* FrontModel.make(async () => ({
+        gpu: "cpu",
+        decide: async () => "{}",
+        dispose: async () => {},
+      }));
+      // The voice failed first, so the call is interrupted while the front model still loads.
+      const call = yield* Effect.forkChild(Effect.scoped(front.acquire));
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(call);
+      yield* Deferred.fail(missing, new VoicePack.VoicePackError({ operation: "load" }));
+      // The failed load's scope closes only when its cache entry goes.
+      yield* Deferred.await(evicted);
+      yield* Effect.scoped(front.acquire);
+    }).pipe(Effect.provide(Layer.mergeAll(services("unsloth/Qwen3-1.7B-GGUF"), pack)));
+  });
+});
+
 it.effect("rejects a model id outside the catalog", () =>
   Effect.gen(function* () {
     const front = yield* FrontModel.make(() => Promise.reject(new Error("unreachable")));
