@@ -30,8 +30,6 @@ import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serve
 import { cloudSpeechLanguages } from "@t3tools/shared/speech";
 import {
   AudioLinesIcon,
-  CheckIcon,
-  DownloadIcon,
   LanguagesIcon,
   KeyRoundIcon,
   MonitorIcon,
@@ -40,7 +38,6 @@ import {
   RefreshCwIcon,
   StarIcon,
   SlidersHorizontalIcon,
-  Trash2Icon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -73,6 +70,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { VoiceInputSetup } from "../chat/VoiceInputSetup";
+import { formatModelSize, ModelActions, ModelDownloadProgress } from "./ModelDownloadControls";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
@@ -135,7 +133,6 @@ function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
   );
 }
 const SYSTEM_DEFAULT = "system-default";
-const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 const SHORTCUT_MODE_LABELS: Record<VoiceShortcutMode, string> = {
   auto: "Auto: press to toggle, hold to record",
   hold: "Hold: record while held",
@@ -185,8 +182,6 @@ function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) 
 
 function ModelCard(props: ModelCardProps) {
   const { model } = props;
-  const downloading = model.state === "downloading" || model.state === "verifying";
-  const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
     <div className="flex flex-wrap items-start gap-3 px-3 py-2.5 sm:px-4">
       <div className="min-w-0 flex-1">
@@ -224,71 +219,22 @@ function ModelCard(props: ModelCardProps) {
               : model.benchmark
                 ? []
                 : [languageLabel(model.languages[0] ?? "")]),
-            formatSize(model.size),
+            formatModelSize(model.size),
           ]}
         />
-        {downloading ? (
-          <div className="mt-2">
-            <div
-              role="progressbar"
-              aria-label={`${model.name} download progress`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(progress)}
-              className="h-1 overflow-hidden rounded-full bg-muted"
-            >
-              <div
-                className="h-full bg-primary transition-[width] duration-200"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <p className="mt-1 text-2xs text-muted-foreground">
-              {model.state === "verifying"
-                ? "Verifying download…"
-                : `${Math.round(progress)}% downloaded`}
-            </p>
-          </div>
-        ) : null}
+        <ModelDownloadProgress model={model} />
       </div>
-      <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
+      <ModelActions
+        model={model}
+        busy={props.busy}
+        canCancel={props.canCancel}
+        onDownload={props.onDownload}
+        onSelect={props.onSelect}
+        onCancel={props.onCancel}
+        onDelete={props.onDelete}
+      >
         {props.testControls}
-        {downloading ? (
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={`Cancel ${model.name} download`}
-            disabled={!props.canCancel}
-            onClick={props.onCancel}
-          >
-            <XIcon className="size-3.5" />
-          </Button>
-        ) : model.state === "downloadable" ? (
-          <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
-            <DownloadIcon className="mr-1.5 size-3.5" />
-            Download
-          </Button>
-        ) : model.active ? (
-          <Button size="sm" variant="secondary" disabled>
-            <CheckIcon className="mr-1.5 size-3.5" />
-            Selected
-          </Button>
-        ) : (
-          <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
-            Use model
-          </Button>
-        )}
-        {model.state === "installed" ? (
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={props.busy}
-            aria-label={`Delete ${model.name}`}
-            onClick={props.onDelete}
-          >
-            <Trash2Icon className="size-3.5" />
-          </Button>
-        ) : null}
-      </div>
+      </ModelActions>
       {props.children}
     </div>
   );

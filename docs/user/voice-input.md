@@ -150,8 +150,9 @@ can talk over it to interrupt. The call strip shows what it heard and said, with
   the tab, or when the connection drops.
 
 Under **Settings → Voice → Conversation**, pick the **Voice**, when to **Hang up
-when quiet**, and the **Conversation model**: a managed model the environment
-downloads on first use, or an OpenAI-compatible server you already run. Voice
+when quiet**, and the **Conversation model**: download a managed model there
+before your first call (the larger one needs a GPU to answer quickly), or point
+it at an OpenAI-compatible server you already run. Voice
 calls are not available on iPhone and Android yet. There is no default shortcut;
 bind **Composer: Start or Stop Voice Call** in **Settings → Keybindings**.
 

@@ -1,5 +1,8 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { getEnvironmentSpeechStatus } from "@t3tools/client-runtime/voice-input";
+import {
+  getEnvironmentSpeechStatus,
+  getEnvironmentVoiceFrontModels,
+} from "@t3tools/client-runtime/voice-input";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
@@ -91,16 +94,18 @@ export function useVoiceCall(input: {
     }
     const canSend = bindAudioGrant(destination.grantId);
     setStarting(true);
-    const status = await runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared)).catch(
-      (error: unknown) => {
+    const [status, frontModels] = await Promise.all([
+      runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared)).catch((error: unknown) => {
         toastManager.add({
           type: "error",
           title: "Could not start the voice call",
           description: error instanceof Error ? error.message : String(error),
         });
         return null;
-      },
-    );
+      }),
+      // A server-hosted conversation model has no catalog entry; the call reports its own errors.
+      runEnvironmentSpeech(getEnvironmentVoiceFrontModels(prepared)).catch(() => null),
+    ]);
     setStarting(false);
     if (!status) return;
     if (!status.supported || status.state === "missing-model") {
@@ -112,6 +117,21 @@ export function useVoiceCall(input: {
           : status.reason,
       });
       if (status.supported) await navigate({ to: "/settings/voice", hash: "speech-models" });
+      return;
+    }
+    // The managed model is gigabytes; a call that silently waits on it would look hung.
+    const frontModel = frontModels?.models.find((model) => model.active);
+    if (frontModel && frontModel.state !== "installed") {
+      toastManager.add({
+        type: "info",
+        title: "Download the conversation model first",
+        description: `${frontModel.name} answers you during a voice call.`,
+      });
+      await navigate({
+        to: "/settings/voice",
+        search: { machine: environmentId },
+        hash: "voice-call-front-model",
+      });
       return;
     }
     const settings = getClientSettings();

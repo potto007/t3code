@@ -1,16 +1,37 @@
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
+  cancelEnvironmentVoiceFrontModelDownload,
+  downloadEnvironmentVoiceFrontModel,
+  getEnvironmentVoiceFrontModels,
+  removeEnvironmentVoiceFrontModel,
+} from "@t3tools/client-runtime/voice-input";
+import {
+  AuthSettingsWriteScope,
   DEFAULT_VOICE_FRONT_MODEL,
+  type EnvironmentVoiceFrontModel,
   VOICE_TTS_VOICES,
   VoiceFrontModel,
   type VoiceIdleTimeout,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { useState } from "react";
+import { StarIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
+import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
+import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
+import {
+  formatModelSize,
+  isModelDownloading,
+  ModelActions,
+  ModelDownloadProgress,
+} from "./ModelDownloadControls";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
@@ -25,9 +46,149 @@ const IDLE_LABELS: Record<VoiceIdleTimeout, string> = {
 
 const isFrontModel = Schema.is(VoiceFrontModel);
 
+/** The environment's conversation model catalog, polled while a download runs. */
+function useFrontModels(prepared: PreparedConnection | null) {
+  const canManage = useEnvironmentScope(prepared?.environmentId ?? null, AuthSettingsWriteScope);
+  const [models, setModels] = useState<readonly EnvironmentVoiceFrontModel[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [requestedDownload, setRequestedDownload] = useState<string | null>(null);
+  const [connection, setConnection] = useState(prepared);
+  if (connection !== prepared) {
+    setConnection(prepared);
+    setModels(null);
+    setBusy(false);
+    setRequestedDownload(null);
+  }
+  const epoch = useRef(0);
+  const refresh = useStableCallback(async (target: PreparedConnection) => {
+    const current = epoch.current;
+    const next = await runEnvironmentSpeech(getEnvironmentVoiceFrontModels(target)).catch(
+      () => null,
+    );
+    if (next && current === epoch.current) setModels(next.models);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the environment's conversation model catalog when its connection becomes available
+  useEffect(() => {
+    epoch.current += 1;
+    if (prepared) void refresh(prepared);
+    return () => {
+      epoch.current += 1;
+    };
+  }, [prepared, refresh]);
+  const downloading = requestedDownload !== null || (models ?? []).some(isModelDownloading);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls progress while a local request or the environment reports an active download
+  useEffect(() => {
+    if (!prepared || !downloading) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      await refresh(prepared);
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 1_000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [downloading, prepared, refresh]);
+  const run = async (label: string, work: () => Promise<unknown>, downloadId?: string) => {
+    if (!prepared || !canManage) return;
+    const current = epoch.current;
+    if (downloadId) setRequestedDownload(downloadId);
+    else setBusy(true);
+    const error = await work().then(
+      () => null,
+      (cause: unknown) => cause,
+    );
+    if (current !== epoch.current) return;
+    if (error !== null)
+      toastManager.add({
+        type: "error",
+        title: label,
+        description: error instanceof Error ? error.message : String(error),
+      });
+    if (downloadId) setRequestedDownload(null);
+    else setBusy(false);
+    await refresh(prepared);
+  };
+  return { models, run, canManage, busy: busy || downloading || !canManage, requestedDownload };
+}
+
+function FrontModelList(props: {
+  readonly prepared: PreparedConnection;
+  readonly selected: string;
+  readonly onSelect: (id: string) => void;
+}) {
+  const { prepared } = props;
+  const catalog = useFrontModels(prepared);
+  if (catalog.models === null)
+    return <span className="text-xs text-muted-foreground">{props.selected}</span>;
+  return (
+    <div className="w-full divide-y divide-border/60 rounded-lg border border-border/60">
+      {catalog.models.map((listed) => {
+        const model = {
+          ...listed,
+          // The setting is the selection; reading it here keeps the badge current before a refetch.
+          active: listed.id === props.selected,
+          state:
+            listed.id === catalog.requestedDownload && listed.state === "downloadable"
+              ? ("downloading" as const)
+              : listed.state,
+        };
+        return (
+          <div key={model.id} className="flex flex-wrap items-start gap-3 px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-sm font-medium leading-5">{model.name}</span>
+                {model.recommended ? (
+                  <Badge variant="outline">
+                    <StarIcon className="mr-1 size-3" />
+                    Recommended
+                  </Badge>
+                ) : null}
+              </div>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                {model.description} · {formatModelSize(model.size)}
+              </p>
+              <ModelDownloadProgress model={model} />
+            </div>
+            <ModelActions
+              model={model}
+              busy={catalog.busy}
+              canCancel={catalog.canManage}
+              onDownload={() =>
+                void catalog.run(
+                  "Could not download the conversation model",
+                  () =>
+                    runEnvironmentSpeech(downloadEnvironmentVoiceFrontModel(prepared, model.id)),
+                  model.id,
+                )
+              }
+              onSelect={() => props.onSelect(model.id)}
+              onCancel={() =>
+                void catalog.run("Could not cancel the download", () =>
+                  runEnvironmentSpeech(
+                    cancelEnvironmentVoiceFrontModelDownload(prepared, model.id),
+                  ),
+                )
+              }
+              onDelete={() =>
+                void catalog.run("Could not delete the conversation model", () =>
+                  runEnvironmentSpeech(removeEnvironmentVoiceFrontModel(prepared, model.id)),
+                )
+              }
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The front model answers on the thread's environment, so it is an environment setting there. */
 function FrontModelRow() {
   const { environment } = useSettingsScope();
+  const prepared = Option.getOrNull(usePreparedConnection(environment?.environmentId ?? null));
   const frontModel = useScopedSettings((settings) => settings.voiceFrontModel);
   const updateSettings = useUpdateScopedSettings();
   const server = typeof frontModel === "string" ? null : frontModel;
@@ -65,7 +226,7 @@ function FrontModelRow() {
       description={
         server
           ? `${environment?.label ?? "This environment"} sends each turn to this OpenAI-compatible server instead of loading a model of its own.`
-          : `A small model on ${environment?.label ?? "this environment"} answers small talk and hands real work to the thread's agent. It downloads on first use.`
+          : `A small model on ${environment?.label ?? "this environment"} answers small talk and hands real work to the thread's agent.`
       }
       resetAction={
         frontModel !== DEFAULT_VOICE_FRONT_MODEL ? (
@@ -114,6 +275,12 @@ function FrontModelRow() {
               onBlur={(event) => edit({ model: event.target.value })}
             />
           </>
+        ) : prepared && typeof frontModel === "string" ? (
+          <FrontModelList
+            prepared={prepared}
+            selected={frontModel}
+            onSelect={(id) => updateSettings({ voiceFrontModel: id })}
+          />
         ) : (
           <span className="text-xs text-muted-foreground">
             {typeof frontModel === "string" ? frontModel : null}
