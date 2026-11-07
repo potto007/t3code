@@ -52,6 +52,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { VoiceIdleTimeout, VoiceTtsVoice } from "./voiceConversation.ts";
 import {
   CloudSpeechModelId,
   SpeechAcceleration,
@@ -368,6 +369,25 @@ export type ModelPreferences = {
 export const VoiceShortcutMode = Schema.Literals(["auto", "hold", "toggle"]);
 export type VoiceShortcutMode = typeof VoiceShortcutMode.Type;
 
+/** The Kokoro voices offered in Settings: those its authors grade C or better. */
+export const VOICE_TTS_VOICES: Readonly<Record<string, string>> = {
+  af_heart: "Heart",
+  af_bella: "Bella",
+  af_nicole: "Nicole",
+  af_aoede: "Aoede",
+  af_kore: "Kore",
+  af_sarah: "Sarah",
+  af_alloy: "Alloy",
+  af_nova: "Nova",
+  am_fenrir: "Fenrir",
+  am_michael: "Michael",
+  am_puck: "Puck",
+  bf_emma: "Emma (British)",
+  bf_isabella: "Isabella (British)",
+  bm_george: "George (British)",
+  bm_fable: "Fable (British)",
+};
+
 /**
  * Where this device sends microphone audio. A cloud grant names the forwarding environment and
  * the provider; an OpenRouter grant also names the exact model, since OpenRouter has no default.
@@ -551,6 +571,8 @@ export const ClientSettingsSchema = Schema.Struct({
   // Device-local input device id. An empty string follows the operating system default.
   voiceMicrophone: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   voiceShortcutMode: VoiceShortcutMode.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+  voiceTtsVoice: VoiceTtsVoice.pipe(Schema.withDecodingDefault(Effect.succeed("af_heart"))),
+  voiceCallIdleTimeout: VoiceIdleTimeout.pipe(Schema.withDecodingDefault(Effect.succeed("min_10"))),
   speechLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechTranslateToEnglish: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -1932,6 +1954,8 @@ export const ClientSettingsPatch = Schema.Struct({
   timestampFormat: Schema.optionalKey(TimestampFormat),
   voiceMicrophone: Schema.optionalKey(Schema.String),
   voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),
+  voiceTtsVoice: Schema.optionalKey(VoiceTtsVoice),
+  voiceCallIdleTimeout: Schema.optionalKey(VoiceIdleTimeout),
   speechLanguage: Schema.optionalKey(SpeechLanguage),
   speechTranslateToEnglish: Schema.optionalKey(Schema.Boolean),
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),
