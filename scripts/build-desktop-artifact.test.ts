@@ -42,7 +42,6 @@ import {
   resolveMacWebAuthnEntitlements,
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
-  resolveStageIgnoredOptionalDependencies,
   resolveBuildOptions,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
@@ -599,12 +598,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(
       resolveMergedStageDependencies({
         platform: "linux",
-        serverDependencies: {
-          "@ff-labs/fff-node": "0.9.4",
-          "node-pty": "1.1.0",
-          "kokoro-js": "1.2.1",
-          effect: "4.0.0",
-        },
+        serverDependencies: { "@ff-labs/fff-node": "0.9.4", "node-pty": "1.1.0", effect: "4.0.0" },
         desktopDependencies: { "@crowecawcaw/xa11y": "0.13.0" },
         arch: "x64",
         fffNodeVersion: "0.9.4",
@@ -612,40 +606,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       {
         "@ff-labs/fff-node": "0.9.4",
         "node-pty": "1.1.0",
-        "kokoro-js": "1.2.1",
         "@crowecawcaw/xa11y": "0.13.0",
         "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
         "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
       },
     );
-  });
-
-  it("stages one CPU and one non-CUDA GPU build of the front model per target", () => {
-    const shipped = (platform: "mac" | "linux" | "win", arch: "x64" | "arm64" | "universal") => {
-      const ignored = resolveStageIgnoredOptionalDependencies(platform, arch);
-      assert.include(ignored, "@reflink/reflink");
-      return [
-        "linux-arm64",
-        "linux-armv7l",
-        "linux-riscv64",
-        "linux-x64",
-        "linux-x64-cuda",
-        "linux-x64-cuda-ext",
-        "linux-x64-vulkan",
-        "mac-arm64-metal",
-        "mac-x64",
-        "win-arm64",
-        "win-x64",
-        "win-x64-cuda",
-        "win-x64-cuda-ext",
-        "win-x64-vulkan",
-      ].filter((name) => !ignored.includes(`@node-llama-cpp/${name}`));
-    };
-    assert.deepStrictEqual(shipped("linux", "x64"), ["linux-x64", "linux-x64-vulkan"]);
-    assert.deepStrictEqual(shipped("linux", "arm64"), ["linux-arm64"]);
-    assert.deepStrictEqual(shipped("win", "x64"), ["win-x64", "win-x64-vulkan"]);
-    assert.deepStrictEqual(shipped("mac", "arm64"), ["mac-arm64-metal"]);
-    assert.deepStrictEqual(shipped("mac", "universal"), ["mac-arm64-metal", "mac-x64"]);
   });
 
   it.effect("ships Cursor platform assets outside asar for spawning and native loading", () =>
@@ -706,12 +671,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     const x64 = [
       "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
       "node_modules/objc-js/prebuilds/darwin-x64/node.napi.node",
-      "node_modules/onnxruntime-node/bin/napi-v3/darwin/x64/onnxruntime_binding.node",
     ];
     const arm64 = [
       "node_modules/node-pty/prebuilds/darwin-arm64/pty.node",
       "node_modules/objc-js/prebuilds/darwin-arm64/node.napi.armv8.node",
-      "node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node",
     ];
 
     for (const file of x64) {
@@ -742,9 +705,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64/OpenConsole.exe",
           "node_modules/node-pty/prebuilds/win32-x64/pty.node",
           "node_modules/node-pty/prebuilds/linux-x64/pty.node",
-          "node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime.dll",
-          "node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/onnxruntime.dll",
-          "node_modules/onnxruntime-node/bin/napi-v3/linux/x64/libonnxruntime.so.1",
         ];
 
         for (const nativeFile of nativeFiles) {
@@ -783,10 +743,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.isFalse(
           yield* fs.exists(path.join(unpackedRoot, "node_modules/node-pty/prebuilds/win32-arm64")),
         );
-        const onnxRuntime = path.join(unpackedRoot, "node_modules/onnxruntime-node/bin/napi-v3");
-        assert.isTrue(yield* fs.exists(path.join(onnxRuntime, "win32/x64/onnxruntime.dll")));
-        assert.isFalse(yield* fs.exists(path.join(onnxRuntime, "win32/arm64")));
-        assert.isFalse(yield* fs.exists(path.join(onnxRuntime, "linux")));
         assert.isFalse(
           yield* fs.exists(
             path.join(unpackedRoot, "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64"),

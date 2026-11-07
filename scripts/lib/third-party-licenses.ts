@@ -5,8 +5,6 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeModule from "node:module";
 
-import { fromYaml } from "@t3tools/shared/schemaYaml";
-import * as Schema from "effect/Schema";
 import type { Plugin } from "vite-plus";
 
 const THIRD_PARTY_LICENSES_FILE_NAME = "third-party-licenses.json";
@@ -88,9 +86,16 @@ interface PackageNoticeOverrideConfigEntry {
   readonly version?: string;
 }
 
+/** A package no shipped bundle may contain; `@scope/*` matches a whole scope. */
+interface ForbiddenPackageConfigEntry {
+  readonly name: string;
+  readonly reason: string;
+}
+
 interface ThirdPartyLicensesConfig {
   readonly customNotices: ReadonlyArray<CustomNoticeConfigEntry>;
   readonly packageOverrides: ReadonlyArray<PackageNoticeOverrideConfigEntry>;
+  readonly forbiddenPackages: ReadonlyArray<ForbiddenPackageConfigEntry>;
 }
 
 interface SpdxLicenseDetails {
@@ -111,6 +116,7 @@ interface PackageCollection {
 const EMPTY_CONFIG: ThirdPartyLicensesConfig = {
   customNotices: [],
   packageOverrides: [],
+  forbiddenPackages: [],
 };
 
 const NOTICE_FILE_PATTERN = /^(?:licen[cs]e|copying|notice)(?:[._-].*)?$/i;
@@ -249,6 +255,38 @@ function decodeCustomNotices(value: unknown): ReadonlyArray<CustomNoticeConfigEn
   });
 }
 
+function decodeForbiddenPackages(value: unknown): ReadonlyArray<ForbiddenPackageConfigEntry> {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error('Third-party license config field "forbiddenPackages" must be an array.');
+  }
+  return value.map((entry, index) => {
+    const context = `Forbidden package at index ${String(index)}`;
+    if (!isRecord(entry)) throw new Error(`${context} must be an object.`);
+    const name = readOptionalString(entry, "name", context);
+    const reason = readOptionalString(entry, "reason", context);
+    if (name === undefined || reason === undefined) {
+      throw new Error(`${context} must define "name" and "reason".`);
+    }
+    return { name, reason };
+  });
+}
+
+function forbiddenPackageFailures(
+  collection: PackageCollection,
+  forbidden: ReadonlyArray<ForbiddenPackageConfigEntry>,
+): ReadonlyArray<string> {
+  return [...collection.byIdentity.values()].flatMap((collected) => {
+    const name = String(collected.packageJson.name);
+    const rule = forbidden.find((entry) =>
+      entry.name.endsWith("/*") ? name.startsWith(entry.name.slice(0, -1)) : entry.name === name,
+    );
+    return rule
+      ? [`${name} must not ship (${[...collected.bundles].sort().join(", ")}): ${rule.reason}`]
+      : [];
+  });
+}
+
 function decodePackageOverrides(value: unknown): ReadonlyArray<PackageNoticeOverrideConfigEntry> {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
@@ -309,6 +347,7 @@ async function readConfig(configFile: string | URL | undefined): Promise<{
     config: {
       customNotices: decodeCustomNotices(decoded.customNotices),
       packageOverrides: decodePackageOverrides(decoded.packageOverrides),
+      forbiddenPackages: decodeForbiddenPackages(decoded.forbiddenPackages),
     },
     directory: NodePath.dirname(configPath),
   };
@@ -581,30 +620,8 @@ async function isTypeOnlyPackage(packageJson: PackageJson, packageRoot: string):
   return true;
 }
 
-const decodeWorkspaceOverrides = Schema.decodeUnknownSync(
-  fromYaml(
-    Schema.Struct({ overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
-  ),
-);
-
-/** `"parent>dep": "-"` overrides in the workspace beside the config: pnpm never installs that edge. */
-async function readRemovedDependencies(directory: string): Promise<ReadonlySet<string>> {
-  let source: string;
-  try {
-    source = await NodeFSP.readFile(NodePath.join(directory, "pnpm-workspace.yaml"), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set();
-    throw error;
-  }
-  const { overrides = {} } = decodeWorkspaceOverrides(source);
-  return new Set(
-    Object.entries(overrides).flatMap(([selector, value]) => (value === "-" ? [selector] : [])),
-  );
-}
-
 async function collectProductionDependencyPackages(
   packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>,
-  removed: ReadonlySet<string>,
 ): Promise<PackageCollection> {
   const collection: PackageCollection = {
     byIdentity: new Map(),
@@ -614,11 +631,6 @@ async function collectProductionDependencyPackages(
   const visitManifest = async (packageJsonPath: string, bundle: string): Promise<void> => {
     const packageJson = await readPackageJson(packageJsonPath);
     for (const dependencyName of dependencyNames(packageJson)) {
-      if (
-        removed.has(dependencyName) ||
-        removed.has(`${String(packageJson.name)}>${dependencyName}`)
-      )
-        continue;
       const resolved = await resolveDependencyPackage(dependencyName, packageJsonPath);
       if (!resolved) continue;
       const visitKey = `${bundle}:${resolved.packageRoot}`;
@@ -999,11 +1011,10 @@ export async function generateThirdPartyLicenseManifest(input: {
   readonly bundledModuleIds?: ReadonlyArray<string>;
   readonly bundleName?: string;
 }): Promise<ThirdPartyLicenseManifest> {
-  const { config, directory } = await readConfig(input.configFile);
-  const collection = await collectProductionDependencyPackages(
-    input.packageManifests,
-    input.configFile === undefined ? new Set() : await readRemovedDependencies(directory),
-  );
+  const [{ config, directory }, collection] = await Promise.all([
+    readConfig(input.configFile),
+    collectProductionDependencyPackages(input.packageManifests),
+  ]);
   if (input.bundledModuleIds && input.bundleName) {
     await addBundledModulePackages(collection, input.bundledModuleIds, input.bundleName);
   }
@@ -1016,11 +1027,14 @@ export async function generateThirdPartyLicenseManifest(input: {
       packageEntry(collected, config, directory, packageNotices, repositoryNotices),
     ),
   );
-  const failures = packageEntryResults.flatMap((result) =>
-    result.status === "rejected"
-      ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
-      : [],
-  );
+  const failures = [
+    ...forbiddenPackageFailures(collection, config.forbiddenPackages),
+    ...packageEntryResults.flatMap((result) =>
+      result.status === "rejected"
+        ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+        : [],
+    ),
+  ];
   if (failures.length > 0) {
     throw new Error(
       `Third-party license generation found ${String(failures.length)} invalid package notice${failures.length === 1 ? "" : "s"}:\n${failures.map((failure) => `- ${failure}`).join("\n")}`,

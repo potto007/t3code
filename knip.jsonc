@@ -69,8 +69,6 @@
         "@napi-rs/keyring",
         "ffi-rs",
         "transcribe-cpp",
-        "kokoro-js",
-        "node-llama-cpp",
       ],
     },
     "apps/desktop": {

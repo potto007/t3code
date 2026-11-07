@@ -86,7 +86,6 @@ const StageWorkspaceConfig = Schema.Struct({
   allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
   patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-  ignoredOptionalDependencies: Schema.optional(Schema.Array(Schema.String)),
   packageExtensions: Schema.optional(
     Schema.Record(
       Schema.String,
@@ -1004,34 +1003,26 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
 ] as const;
-// Windows terminal helpers and ONNX Runtime builds cannot run on macOS and slow signing and notarization.
+// Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
   "!**/node_modules/node-pty/prebuilds/win32-*/**/*",
   "!**/node_modules/node-pty/third_party/conpty/**/*",
-  "!**/node_modules/onnxruntime-node/bin/napi-v3/win32/**/*",
 ] as const;
 // Linux builds node-pty from source; its prebuilds target other platforms.
 export const LINUX_FILE_EXCLUSIONS = [
   ...MAC_FILE_EXCLUSIONS,
   "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
-  "!**/node_modules/onnxruntime-node/bin/napi-v3/darwin/**/*",
 ] as const;
 
 // Native packages (node-pty, objc-js) ship prebuilds for both Darwin architectures; only universal
 // apps need both. macOS 27 warns that an arm64 app holding x64-only code won't open on macOS 28.
 export function resolveMacFileExclusions(arch?: typeof BuildArch.Type) {
-  const linuxOnnxRuntime = "!**/node_modules/onnxruntime-node/bin/napi-v3/linux/**/*";
   if (arch === undefined || arch === "universal") {
-    return [...MAC_FILE_EXCLUSIONS, linuxOnnxRuntime];
+    return [...MAC_FILE_EXCLUSIONS];
   }
 
   const unusedArch = arch === "arm64" ? "x64" : "arm64";
-  return [
-    ...MAC_FILE_EXCLUSIONS,
-    linuxOnnxRuntime,
-    `!**/node_modules/**/prebuilds/darwin-${unusedArch}/**/*`,
-    `!**/node_modules/onnxruntime-node/bin/napi-v3/darwin/${unusedArch}/**/*`,
-  ];
+  return [...MAC_FILE_EXCLUSIONS, `!**/node_modules/**/prebuilds/darwin-${unusedArch}/**/*`];
 }
 // Large ASAR sidecars avoid NSIS extracting thousands of loose files during installs and updates.
 export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
@@ -1060,11 +1051,6 @@ export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type)
   const unusedArch = arch === "arm64" ? "x64" : "arm64";
   const unusedPrebuild = `**/node_modules/node-pty/prebuilds/win32-${unusedArch}`;
   const unusedConpty = `**/node_modules/node-pty/third_party/conpty/*/win10-${unusedArch}`;
-  const unusedOnnxRuntime = [
-    "**/node_modules/onnxruntime-node/bin/napi-v3/darwin",
-    "**/node_modules/onnxruntime-node/bin/napi-v3/linux",
-    `**/node_modules/onnxruntime-node/bin/napi-v3/win32/${unusedArch}`,
-  ];
 
   return [
     ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
@@ -1072,7 +1058,6 @@ export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type)
     `${unusedPrebuild}/**`,
     unusedConpty,
     `${unusedConpty}/**`,
-    ...unusedOnnxRuntime.flatMap((glob) => [glob, `${glob}/**`]),
   ];
 }
 
@@ -1591,42 +1576,6 @@ const stageClerkPasskeyNativeBinaries = Effect.fn("stageClerkPasskeyNativeBinari
   }
 });
 
-const NODE_LLAMA_CPP_BINARY_PACKAGES = [
-  "linux-arm64",
-  "linux-armv7l",
-  "linux-riscv64",
-  "linux-x64",
-  "linux-x64-cuda",
-  "linux-x64-cuda-ext",
-  "linux-x64-vulkan",
-  "mac-arm64-metal",
-  "mac-x64",
-  "win-arm64",
-  "win-x64",
-  "win-x64-cuda",
-  "win-x64-cuda-ext",
-  "win-x64-vulkan",
-] as const;
-
-// node-llama-cpp's arm builds also claim x64, so pnpm installs them on every Linux x64 target. CUDA
-// builds add 200-420 MB and need a matching CUDA runtime; Vulkan, Metal and the CPU build cover
-// GPUs without them. Its model downloader's reflink helper is never used.
-export function resolveStageIgnoredOptionalDependencies(
-  platform: typeof BuildPlatform.Type,
-  arch: typeof BuildArch.Type,
-) {
-  const arches = arch === "universal" ? ["arm64", "x64"] : [arch];
-  const shipped = (name: string) =>
-    !name.includes("cuda") &&
-    arches.some((target) => new RegExp(`^${platform}-${target}(-|$)`).test(name));
-  return [
-    "@reflink/reflink",
-    ...NODE_LLAMA_CPP_BINARY_PACKAGES.filter((name) => !shipped(name)).map(
-      (name) => `@node-llama-cpp/${name}`,
-    ),
-  ];
-}
-
 export function createStageWorkspaceConfig(input: {
   readonly platform: typeof BuildPlatform.Type;
   readonly arch: typeof BuildArch.Type;
@@ -1657,7 +1606,6 @@ export function createStageWorkspaceConfig(input: {
       ? { patchedDependencies }
       : {}),
     ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
-    ignoredOptionalDependencies: resolveStageIgnoredOptionalDependencies(platform, arch),
     packageExtensions: STAGE_PACKAGE_EXTENSIONS,
   };
 }
@@ -2851,15 +2799,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Disable smart unpack so native packages' JS/metadata stay archived and avoid slowing NSIS with loose files.
     ...(platform === "win"
       ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {
-          // These addons load sibling libraries by path, which Electron cannot extract.
-          asarUnpack: [
-            "**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}",
-            "**/node_modules/onnxruntime-node/bin/**/*",
-            // llama.cpp loads its CPU and GPU backends from the addon's directory.
-            "**/node_modules/@node-llama-cpp/*/bins/**/*",
-          ],
-        }),
+      : { asarUnpack: ["**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}"] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),

@@ -295,7 +295,7 @@ describe("third-party license generation", () => {
     expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
-  it("requires notice text unless a workspace override removes the package", async () => {
+  it("fails when a production package has no distributable notice text", async () => {
     const fixture = await createFixture();
     await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
 
@@ -305,18 +305,35 @@ describe("third-party license generation", () => {
         packageManifests: [{ bundle: "web", path: fixture.appManifest }],
       }),
     ).rejects.toThrow("does not include a license or notice file");
+  });
 
-    // A pnpm override removal keeps that package out of the install, so it needs no notice.
-    await NodeFSP.writeFile(
-      NodePath.join(fixture.root, "pnpm-workspace.yaml"),
-      'overrides:\n  "fixture-app>demo-dependency": "-"\n',
-      "utf8",
-    );
-    const manifest = await generateThirdPartyLicenseManifest({
-      configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+  it("fails when a forbidden package ships in any bundle", async () => {
+    const fixture = await createFixture();
+    const config = JSON.parse(await NodeFSP.readFile(fixture.configFile, "utf8")) as object;
+    await writeJson(fixture.configFile, {
+      ...config,
+      forbiddenPackages: [
+        { name: "demo-*", reason: "unused pattern" },
+        { name: "demo-dependency", reason: "it embeds GPL code" },
+      ],
     });
-    expect(manifest.entries.map((entry) => entry.name)).not.toContain("demo-dependency");
+
+    await expect(
+      generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      }),
+    ).rejects.toThrow("demo-dependency must not ship (web): it embeds GPL code");
+    await writeJson(fixture.configFile, {
+      ...config,
+      forbiddenPackages: [{ name: "@demo/*", reason: "a whole scope" }],
+    });
+    await expect(
+      generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      }),
+    ).resolves.toMatchObject({ schemaVersion: 1 });
   });
 
   it("collects nested notices even when a package also has a root license", async () => {
