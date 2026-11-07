@@ -24,6 +24,7 @@ import {
   delegationText,
   limitSpeech,
   makeFrontHistory,
+  nextTurn,
   noteText,
   type FrontInput,
 } from "./prompts.ts";
@@ -250,8 +251,8 @@ const make = Effect.gen(function* () {
     // The front answers once the user has finished: what they say next joins this turn.
     const think: Effect.Effect<void> = Effect.suspend(() => {
       if (thinking || pending.length === 0 || utterance.heard || interruption) return Effect.void;
-      const inputs = pending;
-      pending = [];
+      const inputs = nextTurn(pending);
+      pending = pending.slice(inputs.length);
       return Effect.gen(function* () {
         const decision = yield* front.decide(history.messages(inputs));
         // Committed before acting, so a barge-in from here on no longer takes the turn back.

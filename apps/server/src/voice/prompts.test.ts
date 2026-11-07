@@ -6,6 +6,7 @@ import {
   FRONT_SYSTEM_PROMPT,
   limitSpeech,
   makeFrontHistory,
+  nextTurn,
 } from "./prompts.ts";
 
 const reply = (speech: string) => ({ action: "reply" as const, speech });
@@ -39,6 +40,15 @@ it("sends adjacent user words as one turn and agent results as their own", () =>
     { role: "user", content: "[Agent finished]\nThe build passed." },
     { role: "user", content: "[Agent stopped: failed]" },
   ]);
+});
+
+it("answers a result that arrived mid-sentence before the words that follow it", () => {
+  const result = { type: "result", status: "completed", text: "14 files." } as const;
+  const words = { type: "user", text: "then read the readme" } as const;
+  expect(nextTurn([result, words, words])).toEqual([result]);
+  expect(nextTurn([words, words, result])).toEqual([words, words]);
+  expect(nextTurn([result, result])).toEqual([result, result]);
+  expect(nextTurn([])).toEqual([]);
 });
 
 it("caps a relayed result near 500 tokens at a word boundary", () => {

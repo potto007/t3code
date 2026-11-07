@@ -36,6 +36,12 @@ function inputMessage(input: FrontInput): FrontMessage {
   return { role: "user", content: body ? `${heading}\n${body}` : heading };
 }
 
+/** Results and the user's words get separate answers, in arrival order, so no readback is lost. */
+export function nextTurn(pending: readonly FrontInput[]): readonly FrontInput[] {
+  const end = pending.findIndex((input) => input.type !== pending[0]?.type);
+  return end < 0 ? pending : pending.slice(0, end);
+}
+
 /** Adjacent user words are one turn: a sentence cut off mid-way goes to the front whole. */
 function mergeInputs(inputs: readonly FrontInput[]): FrontMessage[] {
   const messages: FrontMessage[] = [];
