@@ -49,9 +49,9 @@ it("ends a finished sentence sooner and holds an unfinished one longer", () => {
   ).toBe(true);
 });
 
-it("reports speech starting again only after a real gap, and never ends without words", () => {
+it("reports speech starting again only after a real gap", () => {
   const turns = makeTurnDetector();
-  expect(turns.observe({ samples: ms(5000), voicedUntil: ms(400), text: "" })).toEqual({
+  expect(turns.observe({ samples: ms(1500), voicedUntil: ms(400), text: "" })).toEqual({
     heard: true,
     speechStarted: true,
     ended: false,
@@ -68,6 +68,18 @@ it("reports speech starting again only after a real gap, and never ends without 
   expect(
     turns.observe({ samples: ms(500), voicedUntil: ms(200), text: "next" }).speechStarted,
   ).toBe(true);
+});
+
+// Streaming Parakeet holds a short answer such as "No." until more speech arrives;
+// finishing the utterance flushes it, and noise flushes to nothing.
+it("ends voiced speech after the pause even before its words arrive", () => {
+  const turns = makeTurnDetector();
+  turns.observe({ samples: ms(1000), voicedUntil: ms(900), text: "" });
+  expect(turns.observe({ samples: ms(2500), voicedUntil: ms(900), text: "" }).ended).toBe(true);
+  const unheard = makeTurnDetector();
+  expect(unheard.observe({ samples: ms(5000), voicedUntil: undefined, text: "" }).ended).toBe(
+    false,
+  );
 });
 
 it("ends at the maximum length even while speech continues", () => {

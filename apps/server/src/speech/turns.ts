@@ -53,8 +53,9 @@ export function makeTurnDetector(settings: TurnSettings = DEFAULT_TURN_SETTINGS)
       heardUntil = current;
       lastSamples = samples;
       lastText = text;
+      // Voiced speech ends too: finishing flushes words the recognizer still holds.
       const ended =
-        text.trim() !== "" &&
+        (text.trim() !== "" || voicedUntil !== undefined) &&
         (samples >= settings.maxUtteranceMs * SAMPLES_PER_MS ||
           (current !== undefined &&
             samples - current >= requiredSilenceMs(text, settings) * SAMPLES_PER_MS));
