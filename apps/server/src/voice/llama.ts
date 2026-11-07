@@ -23,9 +23,15 @@ const loaderEntry = `
       const { availableParallelism } = await import("node:os");
       // Speech recognition and synthesis share the CPU during a call; llama.cpp spins every
       // thread it owns, and oversubscribed it slows by an order of magnitude.
-      const llama = await llamaCpp.getLlama({ gpu, build: "never", skipDownload: true,
-        progressLogs: false, logLevel: "error",
-        maxThreads: Math.max(1, Math.floor(availableParallelism() / 2)) });
+      const options = { build: "never", skipDownload: true, progressLogs: false, logLevel: "error",
+        maxThreads: Math.max(1, Math.floor(availableParallelism() / 2)) };
+      let llama = await llamaCpp.getLlama({ ...options, gpu });
+      // A GPU build can load with no usable device (Vulkan with only a software driver, as in
+      // WSL) and then runs slower than the CPU build.
+      if (llama.gpu && (await llama.getVramState()).total === 0) {
+        await llama.dispose();
+        llama = await llamaCpp.getLlama({ ...options, gpu: false });
+      }
       const model = await llama.loadModel({ modelPath: path });
       const context = await model.createContext({ contextSize: 8192 });
       // Thinking would spend the latency budget before the first decision token.
