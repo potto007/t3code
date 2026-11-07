@@ -1,5 +1,11 @@
 import { expect, it } from "vite-plus/test";
-import { DEFAULT_TURN_SETTINGS, makeTurnDetector, requiredSilenceMs } from "./turns.ts";
+import {
+  DEFAULT_TURN_SETTINGS,
+  makeTurnDetector,
+  pauseText,
+  requiredSilenceMs,
+  utteranceWords,
+} from "./turns.ts";
 
 const ms = (value: number) => value * 16;
 
@@ -10,25 +16,55 @@ it.each([
   ["Run the tests,", 3000],
   ["Open the file and", 3000],
   ["check the", 3000],
-  ["Run the tests", 1500],
-  ["Sandy", 1500],
+  ["What does it do when", 3000],
+  ["Run the tests", 1200],
+  ["I want to know", 1200],
+  ["Sandy", 1200],
 ])("waits for the pause that %j calls for", (text, wait) => {
   expect(requiredSilenceMs(text, DEFAULT_TURN_SETTINGS)).toBe(wait);
 });
 
-it("ends an utterance once the silence after speech reaches the required pause", () => {
+it("pauses once early in the silence, then ends once it reaches the required pause", () => {
   const turns = makeTurnDetector();
   expect(turns.observe({ samples: ms(500), voicedUntil: ms(450), text: "Run the tests" })).toEqual({
     heard: true,
     speechStarted: true,
+    paused: false,
     ended: false,
   });
-  expect(turns.observe({ samples: ms(1900), voicedUntil: ms(450), text: "Run the tests" })).toEqual(
-    { heard: false, speechStarted: false, ended: false },
+  expect(turns.observe({ samples: ms(750), voicedUntil: ms(450), text: "Run the tests" })).toEqual({
+    heard: false,
+    speechStarted: false,
+    paused: true,
+    ended: false,
+  });
+  expect(turns.observe({ samples: ms(1600), voicedUntil: ms(450), text: "Run the tests" })).toEqual(
+    { heard: false, speechStarted: false, paused: false, ended: false },
   );
-  expect(turns.observe({ samples: ms(1950), voicedUntil: ms(450), text: "Run the tests" })).toEqual(
-    { heard: false, speechStarted: false, ended: true },
+  expect(turns.observe({ samples: ms(1650), voicedUntil: ms(450), text: "Run the tests" })).toEqual(
+    { heard: false, speechStarted: false, paused: false, ended: true },
   );
+  // Speech after the pause makes the next pause count again.
+  turns.observe({ samples: ms(1700), voicedUntil: ms(1700), text: "Run the tests and" });
+  expect(
+    turns.observe({ samples: ms(2000), voicedUntil: ms(1700), text: "Run the tests and" }).paused,
+  ).toBe(true);
+});
+
+it.each([
+  [
+    "I want to know.",
+    "How it works",
+    "I want to know. How it works",
+    "I want to know. How it works",
+  ],
+  ["I want to know", "How it works", "I want to know how it works", "I want to know how it works"],
+  ["Read the", "README", "Read the README", "Read the README"],
+  ["What does it do when?", "", "What does it do when?", "What does it do when"],
+  ["", "run the tests.", "run the tests.", "run the tests."],
+])("joins %j and %j", (finalized, live, words, rules) => {
+  expect(utteranceWords(finalized, live)).toBe(words);
+  expect(pauseText(finalized, live)).toBe(rules);
 });
 
 it("ends a finished sentence sooner and holds an unfinished one longer", () => {
@@ -54,6 +90,7 @@ it("reports speech starting again only after a real gap", () => {
   expect(turns.observe({ samples: ms(1500), voicedUntil: ms(400), text: "" })).toEqual({
     heard: true,
     speechStarted: true,
+    paused: true,
     ended: false,
   });
   expect(
@@ -62,6 +99,7 @@ it("reports speech starting again only after a real gap", () => {
   expect(turns.observe({ samples: ms(5600), voicedUntil: ms(5600), text: "hi there" })).toEqual({
     heard: true,
     speechStarted: false,
+    paused: false,
     ended: false,
   });
   turns.reset();
@@ -96,6 +134,7 @@ it("falls back to transcript changes when no silence detector reports speech", (
   ).toEqual({
     heard: true,
     speechStarted: true,
+    paused: false,
     ended: false,
   });
   expect(
