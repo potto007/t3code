@@ -105,6 +105,7 @@ const store = Layer.succeed(
       Effect.sync(() => {
         readyModels.delete(model.id);
       }),
+    fetch: () => Effect.die("not used"),
   }),
 );
 const layer = SpeechService.layer.pipe(

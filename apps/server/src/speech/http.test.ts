@@ -32,6 +32,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as FrontModel from "../voice/FrontModel.ts";
+import * as VoicePack from "../voice/pack/VoicePack.ts";
 import { speechHttpApiLayer } from "./http.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
@@ -51,6 +52,7 @@ const principal = (...scopes: AuthEnvironmentScope[]) =>
 const dependencies = Layer.mergeAll(
   Layer.mock(CloudSpeech.CloudSpeech)({}),
   Layer.mock(FrontModel.FrontModel)({}),
+  Layer.mock(VoicePack.VoicePack)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
     getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),

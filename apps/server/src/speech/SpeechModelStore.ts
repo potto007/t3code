@@ -35,6 +35,15 @@ class SpeechModelDownloadError extends Schema.TaggedError<SpeechModelDownloadErr
   }
 }
 
+/** Any file fetched with resume and verified against a pinned digest before it is used. */
+export type RemoteFile = {
+  /** Names the file in errors and spans. */
+  readonly id: string;
+  readonly url: string;
+  readonly size: number;
+  readonly digest: { readonly algorithm: "sha256" | "sha512"; readonly hex: string };
+};
+
 type SpeechModelDownloadProgress = {
   readonly onProgress?: (downloaded: number) => void;
   readonly onVerificationStart?: () => void;
@@ -55,6 +64,15 @@ export class SpeechModelStore extends Context.Service<
       SpeechModelDownloadError | PlatformError | HttpClientError.HttpClientError
     >;
     readonly remove: (model: ModelFile) => Effect.Effect<void, PlatformError>;
+    /** Downloads to `destination`, renaming into place only after the digest matches. */
+    readonly fetch: (
+      file: RemoteFile,
+      destination: string,
+      progress?: SpeechModelDownloadProgress,
+    ) => Effect.Effect<
+      string,
+      SpeechModelDownloadError | PlatformError | HttpClientError.HttpClientError
+    >;
   }
 >()("t3/speech/SpeechModelStore") {}
 
@@ -99,12 +117,12 @@ const make = Effect.gen(function* () {
     );
 
   const digestMatches = Effect.fn("SpeechModelStore.digest")(
-    function* (model: ModelFile, file: string) {
-      const hash = NodeCrypto.createHash("sha256");
+    function* (digest: RemoteFile["digest"], file: string) {
+      const hash = NodeCrypto.createHash(digest.algorithm);
       yield* fs
         .stream(file)
         .pipe(Stream.runForEach((chunk) => Effect.sync(() => void hash.update(chunk))));
-      return hash.digest("hex") === model.sha256;
+      return hash.digest("hex") === digest.hex;
     },
     Effect.orElseSucceed(() => false),
   );
@@ -124,7 +142,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.orElseSucceed(() => undefined));
     if (recorded === marker) return file;
     onVerificationStart?.();
-    const valid = yield* digestMatches(model, file);
+    const valid = yield* digestMatches({ algorithm: "sha256", hex: model.sha256 }, file);
     if (!valid) corrupt.set(file, marker);
     const current = yield* expectedFile(model, file);
     if (!valid || !current || identity(model, current) !== marker) return undefined;
@@ -132,14 +150,13 @@ const make = Effect.gen(function* () {
     return file;
   });
 
-  const fetchInto = Effect.fn("SpeechModelStore.fetch")(function* (
-    model: ModelFile,
-    url: string,
+  const fetchInto = Effect.fn("SpeechModelStore.fetchInto")(function* (
+    model: RemoteFile,
     partialPath: string,
     offset: number,
     onProgress?: (downloaded: number) => void,
   ) {
-    const request = HttpClientRequest.get(url).pipe(
+    const request = HttpClientRequest.get(model.url).pipe(
       offset > 0 ? HttpClientRequest.setHeader("Range", `bytes=${offset}-`) : (r) => r,
     );
     const response = yield* http.execute(request);
@@ -183,6 +200,40 @@ const make = Effect.gen(function* () {
     return downloaded;
   });
 
+  const fetchVerified = Effect.fn("SpeechModelStore.fetchVerified")(function* (
+    file: RemoteFile,
+    partialPath: string,
+    finalPath: string,
+    progress: SpeechModelDownloadProgress,
+  ) {
+    return yield* Effect.gen(function* () {
+      for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+        const offset = Number((yield* statFile(partialPath))?.size ?? 0);
+        if (offset === file.size) break;
+        // Transport and disk failures resume from the partial file; a bad response does not.
+        const downloaded = yield* fetchInto(file, partialPath, offset, progress.onProgress).pipe(
+          Effect.catchIf(
+            (error) => attempt < DOWNLOAD_ATTEMPTS && error._tag !== "SpeechModelDownloadError",
+            () => Effect.succeed(-1),
+          ),
+        );
+        if (downloaded === file.size) break;
+      }
+      progress.onVerificationStart?.();
+      const complete = Number((yield* statFile(partialPath))?.size ?? -1) === file.size;
+      if (!complete || !(yield* digestMatches(file.digest, partialPath)))
+        return yield* new SpeechModelDownloadError({ modelId: file.id, reason: "verification" });
+      yield* fs.rename(partialPath, finalPath);
+      return finalPath;
+    }).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : fs.remove(partialPath, { force: true }).pipe(Effect.ignore),
+      ),
+    );
+  });
+
   const download: SpeechModelStore["Service"]["download"] = Effect.fn("SpeechModelStore.download")(
     function* (model, progress = {}) {
       yield* Effect.annotateCurrentSpan({ modelId: model.id });
@@ -194,44 +245,19 @@ const make = Effect.gen(function* () {
         directory,
         `${path.basename(model.filename)}.${yield* random.uuidV4()}.part`,
       );
-      const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
-      return yield* Effect.gen(function* () {
-        for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
-          const offset = Number((yield* statFile(partialPath))?.size ?? 0);
-          if (offset === model.size) break;
-          // Transport and disk failures resume from the partial file; a bad response does not.
-          const downloaded = yield* fetchInto(
-            model,
-            url,
-            partialPath,
-            offset,
-            progress.onProgress,
-          ).pipe(
-            Effect.catchIf(
-              (error) => attempt < DOWNLOAD_ATTEMPTS && error._tag !== "SpeechModelDownloadError",
-              () => Effect.succeed(-1),
-            ),
-          );
-          if (downloaded === model.size) break;
-        }
-        progress.onVerificationStart?.();
-        const complete = yield* expectedFile(model, partialPath);
-        if (!complete || !(yield* digestMatches(model, partialPath)))
-          return yield* new SpeechModelDownloadError({ modelId: model.id, reason: "verification" });
-        yield* fs.rename(partialPath, finalPath);
-        // Rename changes file metadata, so record the verified file's final identity.
-        const info = yield* fs.stat(finalPath);
-        yield* fs
-          .writeFileString(`${finalPath}.verified`, identity(model, info), { mode: 0o600 })
-          .pipe(Effect.ignore);
-        return finalPath;
-      }).pipe(
-        Effect.onExit((exit) =>
-          Exit.isSuccess(exit)
-            ? Effect.void
-            : fs.remove(partialPath, { force: true }).pipe(Effect.ignore),
-        ),
-      );
+      const file: RemoteFile = {
+        id: model.id,
+        url: `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`,
+        size: model.size,
+        digest: { algorithm: "sha256", hex: model.sha256 },
+      };
+      yield* fetchVerified(file, partialPath, finalPath, progress);
+      // Rename changes file metadata, so record the verified file's final identity.
+      const info = yield* fs.stat(finalPath);
+      yield* fs
+        .writeFileString(`${finalPath}.verified`, identity(model, info), { mode: 0o600 })
+        .pipe(Effect.ignore);
+      return finalPath;
     },
   );
 
@@ -251,6 +277,16 @@ const make = Effect.gen(function* () {
       const file = modelPath(model);
       yield* fs.remove(file, { force: true });
       yield* fs.remove(`${file}.verified`, { force: true });
+    }),
+    fetch: Effect.fn("SpeechModelStore.fetch")(function* (file, destination, progress = {}) {
+      yield* Effect.annotateCurrentSpan({ fileId: file.id });
+      yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
+      return yield* fetchVerified(
+        file,
+        `${destination}.${yield* random.uuidV4()}.part`,
+        destination,
+        progress,
+      );
     }),
   });
 });

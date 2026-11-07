@@ -21,6 +21,7 @@ import { parseFrontDecision } from "./decision.ts";
 import { FRONT_MODELS, type FrontModelEntry, getFrontModel } from "./frontModels.ts";
 import { type FrontLlama, loadFrontLlama } from "./llama.ts";
 import { makeOpenAiFrontSession } from "./openai.ts";
+import * as VoicePack from "./pack/VoicePack.ts";
 
 export type FrontAction = "reply" | "delegate" | "note" | "none";
 
@@ -88,9 +89,19 @@ export class FrontModel extends Context.Service<
 const IDLE_UNLOAD = "5 minutes";
 
 export const make = Effect.fn("FrontModel.make")(function* (
-  load: (path: string, signal: AbortSignal) => Promise<FrontLlama> = loadFrontLlama,
+  load: (
+    path: string,
+    signal: AbortSignal,
+    pack: VoicePack.VoicePackInstall,
+  ) => Promise<FrontLlama> = (path, signal, pack) =>
+    loadFrontLlama(path, signal, {
+      packRoot: pack.root,
+      gpu: pack.gpu,
+      ...(pack.libraryPath ? { libraryPath: pack.libraryPath } : {}),
+    }),
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
+  const voicePack = yield* VoicePack.VoicePack;
   const store = yield* SpeechModelStore.SpeechModelStore;
   const http = yield* HttpClient.HttpClient;
   const scope = yield* Effect.scope;
@@ -135,9 +146,15 @@ export const make = Effect.fn("FrontModel.make")(function* (
   const workers = yield* RcMap.make({
     lookup: Effect.fn("FrontModel.load")(function* (model: FrontModelEntry) {
       const path = yield* install(model);
+      // Held for the worker's life, so an upgrade never deletes files it has loaded.
+      const pack = yield* voicePack.use.pipe(
+        Effect.mapError(
+          (cause) => new FrontModelError({ operation: "load", detail: cause.detail, cause }),
+        ),
+      );
       return yield* Effect.acquireRelease(
         Effect.tryPromise({
-          try: (signal) => load(path, signal),
+          try: (signal) => load(path, signal, pack),
           catch: (cause) => new FrontModelError({ operation: "load", cause }),
         }),
         (loaded) => Effect.promise(() => loaded.dispose()),

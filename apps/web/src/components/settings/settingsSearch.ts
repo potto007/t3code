@@ -557,6 +557,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["voice call conversation front model llm gguf openai url server"],
   },
   {
+    id: "voice-call-pack",
+    title: "Voice pack",
+    to: "/settings/voice",
+    scope: "environment",
+    searchTerms: ["voice call conversation runtime pack download cuda gpu espeak onnx llama"],
+  },
+  {
     id: "voice-call-idle-timeout",
     title: "Hang up when quiet",
     to: "/settings/voice",

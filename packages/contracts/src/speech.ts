@@ -190,6 +190,33 @@ export const EnvironmentVoiceFrontModels = Schema.Struct({
 });
 export type EnvironmentVoiceFrontModels = typeof EnvironmentVoiceFrontModels.Type;
 
+export const EnvironmentVoicePackVariant = Schema.Literals(["cpu", "vulkan", "cuda", "metal"]);
+export type EnvironmentVoicePackVariant = typeof EnvironmentVoicePackVariant.Type;
+
+/** The voice call runtime (speech synthesis and the conversation model), downloaded on demand. */
+export const EnvironmentVoicePack = Schema.Struct({
+  /** False where no runtime build exists for the environment's platform. */
+  supported: Schema.Boolean,
+  state: EnvironmentSpeechModelState,
+  /** The installed build, or the one a download would choose for this machine. */
+  variant: EnvironmentVoicePackVariant,
+  /** Bytes a download of `variant` fetches, including `cudaRuntimeSize`. */
+  size: Schema.Finite,
+  /** NVIDIA's CUDA runtime, fetched when the driver is present but the toolkit is not. */
+  cudaRuntimeSize: Schema.optionalKey(Schema.Finite),
+  /** Bytes for the CPU-only pack, offered when `variant` uses a GPU. */
+  cpuSize: Schema.optionalKey(Schema.Finite),
+  downloaded: Schema.optionalKey(Schema.Finite),
+  /** What the conversation model actually ran on when the installed pack was probed. */
+  gpu: Schema.optionalKey(Schema.String),
+  gpuError: Schema.optionalKey(Schema.String),
+});
+export type EnvironmentVoicePack = typeof EnvironmentVoicePack.Type;
+
+export const EnvironmentVoicePackDownloadRequest = Schema.Struct({
+  variant: Schema.optionalKey(Schema.Literals(["auto", "cpu"])),
+});
+
 export const EnvironmentSpeechState = Schema.Literals(["missing-model", "ready", "transcribing"]);
 export type EnvironmentSpeechState = typeof EnvironmentSpeechState.Type;
 

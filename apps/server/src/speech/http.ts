@@ -24,6 +24,7 @@ import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as SpeechService from "./SpeechService.ts";
 import * as FrontModel from "../voice/FrontModel.ts";
+import * as VoicePack from "../voice/pack/VoicePack.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
 const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
@@ -64,6 +65,13 @@ const mapFrontModelError = <A, R>(
     }),
   );
 
+const mapVoicePackError = <A, R>(effect: Effect.Effect<A, VoicePack.VoicePackError, R>) =>
+  effect.pipe(
+    Effect.catchTags({
+      VoicePackError: (error) => failEnvironmentInternal("internal_error", error),
+    }),
+  );
+
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "voice",
@@ -72,6 +80,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
     const cloud = yield* CloudSpeech.CloudSpeech;
     const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
     const frontModel = yield* FrontModel.FrontModel;
+    const voicePack = yield* VoicePack.VoicePack;
     const guard = Effect.fnUntraced(function* (
       endpoint: string,
       scope: AuthEnvironmentScope = AuthOrchestrationOperateScope,
@@ -202,6 +211,34 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.removeFrontModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
           return yield* frontModel.remove(args.payload.modelId).pipe(mapFrontModelError);
+        }),
+      )
+      .handle(
+        "voicePack",
+        Effect.fn("environment.voice.voicePack")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* voicePack.status;
+        }),
+      )
+      .handle(
+        "downloadVoicePack",
+        Effect.fn("environment.voice.downloadVoicePack")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* voicePack.download(args.payload.variant ?? "auto").pipe(mapVoicePackError);
+        }),
+      )
+      .handle(
+        "cancelVoicePackDownload",
+        Effect.fn("environment.voice.cancelVoicePackDownload")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* voicePack.cancelDownload;
+        }),
+      )
+      .handle(
+        "removeVoicePack",
+        Effect.fn("environment.voice.removeVoicePack")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* voicePack.remove.pipe(mapVoicePackError);
         }),
       )
       .handle(

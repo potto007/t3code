@@ -346,3 +346,44 @@ export const removeEnvironmentVoiceFrontModel = (prepared: PreparedConnection, m
     path: (urls) => urls.removeFrontModel(),
     run: ({ client, headers }) => client.removeFrontModel({ headers, payload: { modelId } }),
   });
+
+export const getEnvironmentVoicePack = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.voicePack(),
+    run: ({ client, headers }) => client.voicePack({ headers }),
+  });
+
+/** Resolves once the pack is installed; poll `getEnvironmentVoicePack` for progress meanwhile. */
+export const downloadEnvironmentVoicePack = (
+  prepared: PreparedConnection,
+  variant: "auto" | "cpu" = "auto",
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.downloadVoicePack(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.downloadVoicePack({ headers, payload: { variant } }),
+  });
+
+export const cancelEnvironmentVoicePackDownload = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.cancelVoicePackDownload(),
+    run: ({ client, headers }) => client.cancelVoicePackDownload({ headers }),
+  });
+
+export const removeEnvironmentVoicePack = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.removeVoicePack(),
+    run: ({ client, headers }) => client.removeVoicePack({ headers }),
+  });

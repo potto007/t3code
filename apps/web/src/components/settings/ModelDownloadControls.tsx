@@ -54,6 +54,8 @@ export function ModelActions(props: {
   readonly onSelect: () => void;
   readonly onCancel: () => void;
   readonly onDelete: () => void;
+  /** Labels an installed item that has no choice to make, like the voice pack. */
+  readonly installedLabel?: string;
   readonly children?: ReactNode;
 }) {
   const { model } = props;
@@ -78,7 +80,7 @@ export function ModelActions(props: {
       ) : model.active ? (
         <Button size="sm" variant="secondary" disabled>
           <CheckIcon className="mr-1.5 size-3.5" />
-          Selected
+          {props.installedLabel ?? "Selected"}
         </Button>
       ) : (
         <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>

@@ -60,6 +60,8 @@ import {
   EnvironmentSpeechModels,
   EnvironmentSpeechModelUnloadTimeoutRequest,
   EnvironmentVoiceFrontModels,
+  EnvironmentVoicePack,
+  EnvironmentVoicePackDownloadRequest,
   EnvironmentSpeechPostProcessingRequest,
   EnvironmentSpeechPostProcessingResult,
   EnvironmentSpeechStatus,
@@ -909,6 +911,35 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechModelRequest,
       success: EnvironmentVoiceFrontModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("voicePack", "/api/voice/pack", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentVoicePack,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("downloadVoicePack", "/api/voice/pack/download", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentVoicePackDownloadRequest,
+      success: EnvironmentVoicePack,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelVoicePackDownload", "/api/voice/pack/cancel", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentVoicePack,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeVoicePack", "/api/voice/pack/remove", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentVoicePack,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )

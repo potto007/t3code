@@ -8,6 +8,7 @@ import { TestClock } from "effect/testing";
 import type { KokoroSpeaker } from "./kokoro.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import * as TextToSpeech from "./TextToSpeech.ts";
+import * as VoicePack from "../voice/pack/VoicePack.ts";
 
 const store = Layer.succeed(
   SpeechModelStore.SpeechModelStore,
@@ -16,6 +17,7 @@ const store = Layer.succeed(
     installedPath: () => Effect.undefined,
     download: (file) => Effect.succeed(`/models/${file.directory}/${file.filename}`),
     remove: () => Effect.void,
+    fetch: () => Effect.die("not used"),
   }),
 );
 
@@ -56,5 +58,16 @@ it.effect("renders a chunk per sentence on one worker, unloaded once speech goes
     );
     yield* TestClock.adjust("5 minutes");
     expect(disposed).toBe(2);
-  }).pipe(Effect.scoped, Effect.provide(Layer.merge(store, NodeServices.layer)));
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        store,
+        NodeServices.layer,
+        Layer.mock(VoicePack.VoicePack)({
+          use: Effect.succeed({ root: "/voice-pack", gpu: "auto" as const }),
+        }),
+      ),
+    ),
+  );
 });

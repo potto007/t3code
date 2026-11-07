@@ -33,14 +33,16 @@ export const KOKORO_MODEL_FILES: readonly ModelFile[] = [
   sha256: sha256 as string,
 }));
 
-// transformers.js loads sharp for image models only; the workspace drops it, so stub the import.
+// The runtime comes from the voice pack in T3 home, never from the app bundle. transformers.js loads
+// sharp for image models only; the pack leaves it out, so stub the import.
 const loaderEntry = `
   const { createRequire, findPackageJSON, registerHooks } = await import("node:module");
   const { dirname, join } = await import("node:path");
-  const loadKokoro = async (moduleUrl) => {
+  const { pathToFileURL } = await import("node:url");
+  const loadKokoro = async (moduleUrl, packRoot) => {
     if (moduleUrl) return await import(moduleUrl);
-    const packagePath = findPackageJSON("kokoro-js", baseUrl);
-    if (!packagePath) throw new Error("The speech synthesis package is unavailable.");
+    const packagePath = findPackageJSON("kokoro-js", pathToFileURL(join(packRoot, "package.json")));
+    if (!packagePath) throw new Error("The voice pack has no speech synthesis package.");
     const sharpStub = "file:///t3-speech-worker/sharp-stub.cjs";
     registerHooks({
       resolve: (specifier, context, next) => specifier === "sharp"
@@ -50,7 +52,7 @@ const loaderEntry = `
             source: "module.exports = () => { throw new Error('Images are unavailable.'); };" }
         : next(url, context),
     });
-    // The require entry keeps the package on disk reachable from Node SEA, like transcribe-cpp.
+    // A require entry loads the package from disk under Node SEA too, like transcribe-cpp.
     const entry = createRequire(packagePath).resolve(join(dirname(packagePath), "dist/kokoro.cjs"));
     const { env } = createRequire(entry)("@huggingface/transformers");
     // Model files come only from the verified store; never reach the Hugging Face hub.
@@ -65,7 +67,7 @@ let tts;
 process.on("message", async (message) => {
   try {
     if (message.kind === "load") {
-      const { KokoroTTS } = await loadKokoro(message.moduleUrl);
+      const { KokoroTTS } = await loadKokoro(message.moduleUrl, message.packRoot);
       tts = await KokoroTTS.from_pretrained(message.path, { dtype: "fp32", device: message.device });
       // The first inference allocates the graph and takes about twice as long; pay it here.
       await tts.generate("Ready.", { voice: "af_heart" });
@@ -87,16 +89,15 @@ process.on("disconnect", () => process.exit(0));
 
 export async function runKokoroWorker() {
   if (!process.send) throw new Error("Speech workers require an IPC channel.");
-  const run = new Function("baseUrl", `return (async () => {${loaderEntry}${entry}})();`) as (
-    baseUrl: string,
-  ) => Promise<void>;
-  await run(import.meta.url);
+  const run = new Function(
+    `return (async () => {${loaderEntry}${entry}})();`,
+  ) as () => Promise<void>;
+  await run();
 }
 
 function kokoroWorkerArgs() {
   if (NodeSea.isSea()) return ["__speech-worker", "tts"];
-  const loader = `const baseUrl = ${JSON.stringify(import.meta.url)};${loaderEntry}`;
-  return ["--input-type=module", "-e", loader + entry];
+  return ["--input-type=module", "-e", loaderEntry + entry];
 }
 
 type Reply = {
@@ -113,7 +114,11 @@ export type KokoroSpeaker = Awaited<ReturnType<typeof loadKokoroSpeaker>>;
 export async function loadKokoroSpeaker(
   modelDirectory: string,
   signal: AbortSignal,
-  options: { readonly moduleUrl?: string; readonly device?: "cpu" | "cuda" } = {},
+  options: {
+    readonly packRoot?: string;
+    readonly moduleUrl?: string;
+    readonly device?: "cpu" | "cuda";
+  } = {},
 ) {
   signal.throwIfAborted();
   const child = NodeChildProcess.spawn(process.execPath, kokoroWorkerArgs(), {
@@ -184,6 +189,7 @@ export async function loadKokoroSpeaker(
     await send({
       kind: "load",
       path: modelDirectory,
+      packRoot: options.packRoot,
       moduleUrl: options.moduleUrl,
       device: options.device ?? "cpu",
     });

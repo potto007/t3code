@@ -13,6 +13,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechModelStore from "../speech/SpeechModelStore.ts";
 import * as FrontModel from "./FrontModel.ts";
 import type { FrontLlama } from "./llama.ts";
+import * as VoicePack from "./pack/VoicePack.ts";
 
 const store = Layer.succeed(
   SpeechModelStore.SpeechModelStore,
@@ -21,6 +22,7 @@ const store = Layer.succeed(
     installedPath: () => Effect.undefined,
     download: (file) => Effect.succeed(`/models/${file.filename}`),
     remove: () => Effect.void,
+    fetch: () => Effect.die("not used"),
   }),
 );
 
@@ -30,6 +32,9 @@ const services = (voiceFrontModel: VoiceFrontModel) =>
     NodeServices.layer,
     FetchHttpClient.layer,
     ServerSettings.ServerSettingsService.layerTest({ voiceFrontModel }),
+    Layer.mock(VoicePack.VoicePack)({
+      use: Effect.succeed({ root: "/voice-pack", gpu: "auto" as const }),
+    }),
   );
 
 const messages = [
@@ -100,6 +105,7 @@ it.effect("shares one download between settings and a call, and cancels it for b
         installedPath: () => Effect.undefined,
         download,
         remove: () => Effect.void,
+        fetch: () => Effect.die("not used"),
       }),
     );
     const id = "unsloth/Qwen3-1.7B-GGUF";

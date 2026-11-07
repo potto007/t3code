@@ -1,6 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off - fixture packs are plain files the worker reads from disk.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { expect, it } from "vite-plus/test";
 
-import { loadFrontLlama } from "./llama.ts";
+import { loadFrontLlama, probeFrontGpu } from "./llama.ts";
 
 // Replies with the last message; "hang" generates until the worker aborts it.
 const fixture = `data:text/javascript,${encodeURIComponent(`
@@ -47,4 +52,32 @@ it("abort kills the process and fails the decision in flight", async () => {
     llama.decide([{ role: "user", content: "later" }], new AbortController().signal),
   ).rejects.toThrow("Front model process stopped.");
   await llama.dispose();
+});
+
+it("probes llama.cpp's GPU build from the voice pack", async () => {
+  const packRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-voice-pack-"));
+  const write = (file: string, text: string) => {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(packRoot, file)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(packRoot, file), text);
+  };
+  write("package.json", `{"name":"t3-voice-pack","private":true}`);
+  write("node_modules/node-llama-cpp/package.json", `{"name":"node-llama-cpp","type":"module"}`);
+  // Vulkan without a device reports no VRAM, as in WSL.
+  write(
+    "node_modules/node-llama-cpp/dist/index.js",
+    `export const getLlama = async ({ gpu }) => ({ gpu,
+      getVramState: async () => ({ total: gpu === "vulkan" ? 0 : 1 }), dispose: async () => {} });`,
+  );
+  write(
+    "node_modules/node-llama-cpp/dist/utils/gbnfJson/getGbnfGrammarForGbnfJsonSchema.js",
+    "export const getGbnfGrammarForGbnfJsonSchema = () => '';",
+  );
+  try {
+    expect(await probeFrontGpu(packRoot, "cuda", new AbortController().signal)).toBe("cuda");
+    await expect(probeFrontGpu(packRoot, "vulkan", new AbortController().signal)).rejects.toThrow(
+      "The vulkan build found no GPU device.",
+    );
+  } finally {
+    NodeFS.rmSync(packRoot, { recursive: true, force: true });
+  }
 });

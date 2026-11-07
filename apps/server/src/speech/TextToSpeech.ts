@@ -15,6 +15,7 @@ import {
   type KokoroSpeaker,
 } from "./kokoro.ts";
 import { splitSentences } from "./sentences.ts";
+import * as VoicePack from "../voice/pack/VoicePack.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 
 export class TextToSpeechError extends Schema.TaggedError<TextToSpeechError>()(
@@ -47,18 +48,28 @@ export class TextToSpeech extends Context.Service<
 const IDLE_UNLOAD = "5 minutes";
 
 export const make = Effect.fn("TextToSpeech.make")(function* (
-  load: (directory: string, signal: AbortSignal) => Promise<KokoroSpeaker> = loadKokoroSpeaker,
+  load: (
+    directory: string,
+    signal: AbortSignal,
+    pack: VoicePack.VoicePackInstall,
+  ) => Promise<KokoroSpeaker> = (directory, signal, pack) =>
+    loadKokoroSpeaker(directory, signal, { packRoot: pack.root }),
 ) {
   const store = yield* SpeechModelStore.SpeechModelStore;
+  const voicePack = yield* VoicePack.VoicePack;
   const path = yield* Path.Path;
   const acquire = Effect.fn("TextToSpeech.acquire")(function* () {
+    // Held for the worker's life, so an upgrade never deletes files it has loaded.
+    const pack = yield* voicePack.use.pipe(
+      Effect.mapError((cause) => new TextToSpeechError({ operation: "load", cause })),
+    );
     const installed = yield* Effect.forEach(KOKORO_MODEL_FILES, (file) =>
       store.download(file),
     ).pipe(Effect.mapError((cause) => new TextToSpeechError({ operation: "download", cause })));
     // config.json sits at the model root that transformers.js reads from.
     const directory = path.dirname(installed[0]!);
     return yield* Effect.tryPromise({
-      try: (signal) => load(directory, signal),
+      try: (signal) => load(directory, signal, pack),
       catch: (cause) => new TextToSpeechError({ operation: "load", cause }),
     });
   });

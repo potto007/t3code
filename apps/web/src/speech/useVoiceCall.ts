@@ -2,6 +2,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   getEnvironmentSpeechStatus,
   getEnvironmentVoiceFrontModels,
+  getEnvironmentVoicePack,
 } from "@t3tools/client-runtime/voice-input";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -94,7 +95,7 @@ export function useVoiceCall(input: {
     }
     const canSend = bindAudioGrant(destination.grantId);
     setStarting(true);
-    const [status, frontModels] = await Promise.all([
+    const [status, frontModels, pack] = await Promise.all([
       runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared)).catch((error: unknown) => {
         toastManager.add({
           type: "error",
@@ -105,6 +106,8 @@ export function useVoiceCall(input: {
       }),
       // A server-hosted conversation model has no catalog entry; the call reports its own errors.
       runEnvironmentSpeech(getEnvironmentVoiceFrontModels(prepared)).catch(() => null),
+      // An older environment has no pack endpoint and runs the runtime it bundles.
+      runEnvironmentSpeech(getEnvironmentVoicePack(prepared)).catch(() => null),
     ]);
     setStarting(false);
     if (!status) return;
@@ -117,6 +120,27 @@ export function useVoiceCall(input: {
           : status.reason,
       });
       if (status.supported) await navigate({ to: "/settings/voice", hash: "speech-models" });
+      return;
+    }
+    if (pack && !pack.supported) {
+      toastManager.add({
+        type: "info",
+        title: "Voice call unavailable",
+        description: `Voice calls aren't available on ${threadEnvironment?.label ?? "this environment"}'s platform.`,
+      });
+      return;
+    }
+    if (pack && pack.state !== "installed") {
+      toastManager.add({
+        type: "info",
+        title: "Download the voice pack first",
+        description: "Voice calls speak and answer with a runtime downloaded to the environment.",
+      });
+      await navigate({
+        to: "/settings/voice",
+        search: { machine: environmentId },
+        hash: "voice-call-pack",
+      });
       return;
     }
     // The managed model is gigabytes; a call that silently waits on it would look hung.
