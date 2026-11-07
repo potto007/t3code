@@ -141,6 +141,8 @@ import { useDictationShortcut } from "../../speech/useDictationShortcut";
 import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmissionShortcut";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
+import { useVoiceCall } from "../../speech/useVoiceCall";
+import { ComposerVoiceCallButton, VoiceCallStrip } from "./VoiceCallControls";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
@@ -1881,6 +1883,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
   const voiceSendDisabledReason =
     sendDisabledReason ?? (speechInput.preparing ? "Preparing voice input" : null);
+  const voiceCall = useVoiceCall({
+    environmentId,
+    threadId: routeKind === "server" ? routeThreadRef.threadId : null,
+    projectId: activeProjectId,
+    projectName: projectName ?? null,
+    disabled: dictationDisabled,
+  });
+  const voiceCallShortcutLabel = shortcutLabelForCommand(keybindings, "composer.voiceCall", {
+    context: { terminalFocus: false, terminalOpen },
+  });
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
@@ -3582,6 +3594,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
+            {voiceCall.activeCall ? (
+              <VoiceCallStrip call={voiceCall.activeCall} onThisThread={voiceCall.onThisThread} />
+            ) : null}
+
             {speechInput.preview ? (
               <div
                 aria-label="Live transcription"
@@ -3702,6 +3718,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           onCancel={() => speechInput.cancel()}
                         />
                       </>
+                    ) : null}
+                    {voiceCall.visible &&
+                    !voiceCall.activeCall &&
+                    speechInput.state.phase === "idle" ? (
+                      <ComposerVoiceCallButton
+                        blockedReason={voiceCall.blockedReason}
+                        starting={voiceCall.starting}
+                        disabled={dictationDisabled}
+                        shortcutLabel={voiceCallShortcutLabel}
+                        onStart={() => void voiceCall.start()}
+                      />
                     ) : null}
                     <VoiceInputSetup
                       environmentId={speechInput.transcriptionEnvironmentId}

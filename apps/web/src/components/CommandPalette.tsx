@@ -57,9 +57,11 @@ import {
   ArrowLeftIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
+  AudioLinesIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
+  PhoneOffIcon,
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
@@ -78,6 +80,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
+import { useActiveVoiceCall, useVoiceCallStarter } from "../speech/voiceCall";
 import {
   useDeferredValue,
   useEffect,
@@ -671,6 +674,8 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadKey = activeThread
     ? scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id))
     : null;
+  const activeVoiceCall = useActiveVoiceCall();
+  const startVoiceCall = useVoiceCallStarter(activeThreadKey);
   const supportsThreadFind =
     environments.find((environment) => environment.environmentId === activeThread?.environmentId)
       ?.serverConfig?.threadFind === true;
@@ -1314,6 +1319,29 @@ function OpenCommandPaletteDialog(props: {
       description: "An agent investigates a T3 Code problem and helps file an issue",
       icon: <BugIcon className={ITEM_ICON_CLASS} />,
       run: () => startTriage(triageEnvironmentId),
+    });
+  }
+
+  if (activeVoiceCall) {
+    const { call } = activeVoiceCall;
+    actionItems.push({
+      kind: "action",
+      value: "action:stop-voice-call",
+      title: "Stop voice call",
+      searchTerms: ["voice", "call", "stop", "hang up", "end"],
+      icon: <PhoneOffIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "composer.voiceCall",
+      run: async () => call.stop(),
+    });
+  } else if (startVoiceCall) {
+    actionItems.push({
+      kind: "action",
+      value: "action:start-voice-call",
+      title: "Start voice call",
+      searchTerms: ["voice", "call", "talk", "speak", "conversation"],
+      icon: <AudioLinesIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "composer.voiceCall",
+      run: async () => startVoiceCall(),
     });
   }
 
