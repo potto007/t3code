@@ -25,6 +25,11 @@ export async function runCliCommand() {
   } else if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
+  } else if (process.env.TEST_BINDING_CP === "true" && command?.endsWith("testBindingBinary.js")) {
+    // node-llama-cpp probes a prebuilt binary by forking execPath with this script; a Node SEA
+    // ignores the script argument, so run it here.
+    const { pathToFileURL } = await import("node:url");
+    await import(pathToFileURL(command).href);
   } else if (command === "__speech-worker") {
     const mode = process.argv[3];
     if (mode === "tts") {

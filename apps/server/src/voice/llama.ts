@@ -55,8 +55,8 @@ const loaderEntry = `
 `;
 
 const entry = `
-// node-llama-cpp probes each prebuilt binary in a fork that inherits execArgv; this worker's own
-// "-e" entry would run there instead of the probe script and fail every binary.
+// node-llama-cpp probes each prebuilt binary in a fork that inherits execArgv; this worker's "-e"
+// entry, or a Node SEA's baked-in flags, would displace the probe script and fail every binary.
 process.execArgv.splice(0);
 let engine;
 let running = Promise.resolve();
