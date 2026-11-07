@@ -149,6 +149,17 @@ can talk over it to interrupt. The call strip shows what it heard and said, with
 - The call hangs up after a quiet stretch (10 minutes by default), when you close
   the tab, or when the connection drops.
 
+Calls need the **Voice pack**, the speech and model runtime, which T3 Code does
+not ship. Download it once per environment under **Settings → Voice →
+Conversation**; starting a call without it opens that row. It is about 170 MB,
+or about 330 MB with a GPU build on NVIDIA hardware, saved in T3 Code's data
+folder. On an NVIDIA machine without the CUDA 13 runtime installed, it also
+fetches NVIDIA's runtime (about 450 MB more, under the
+[CUDA EULA](https://docs.nvidia.com/cuda/eula/index.html)); choose **Use CPU** to
+skip it. If the GPU build fails its check after download, calls run on the CPU
+and the row says so. The pack includes [eSpeak NG](https://github.com/espeak-ng/espeak-ng),
+licensed GPL-3.0-or-later.
+
 Under **Settings → Voice → Conversation**, pick the **Voice**, when to **Hang up
 when quiet**, and the **Conversation model**: download a managed model there
 before your first call (the larger one needs a GPU to answer quickly), or point
