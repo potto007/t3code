@@ -28,6 +28,8 @@ export interface FrontDecision {
   readonly action: FrontAction;
   readonly speech: string;
   readonly task?: string;
+  /** The task would publish, send, or change something outside the local checkout. */
+  readonly outward?: boolean;
 }
 
 export interface FrontMessage {

@@ -41,8 +41,8 @@ it.effect("loads a managed model once per call and unloads it after idling", () 
   const loads: string[] = [];
   let disposed = 0;
   const replies = [
-    `{"action":"delegate","speech":" On it. ","task":"Run the tests."}`,
-    `{"action":"none","speech":"mm-hm","task":"None."}`,
+    `{"action":"delegate","speech":" On it. ","task":"Push the branch.","outward":true}`,
+    `{"action":"none","speech":"mm-hm","task":"None.","outward":true}`,
     `{"action":"reply"`,
   ];
   const load = async (path: string): Promise<FrontLlama> => {
@@ -61,7 +61,8 @@ it.effect("loads a managed model once per call and unloads it after idling", () 
         expect(yield* session.decide(messages)).toEqual({
           action: "delegate",
           speech: "On it.",
-          task: "Run the tests.",
+          task: "Push the branch.",
+          outward: true,
         });
         expect(yield* session.decide(messages)).toEqual({ action: "none", speech: "" });
         const error = yield* Effect.flip(session.decide(messages));
@@ -133,7 +134,7 @@ const completion = (content: string) =>
 it.effect("sends the conversation to an OpenAI-compatible server under the decision schema", () =>
   Effect.gen(function* () {
     const upstream = vi.fn<typeof fetch>(async () =>
-      completion(`{"action":"reply","speech":"Hi there.","task":""}`),
+      completion(`{"action":"reply","speech":"Hi there.","task":"","outward":false}`),
     );
     const front = yield* FrontModel.make();
     const decision = yield* Effect.scoped(
@@ -144,7 +145,12 @@ it.effect("sends the conversation to an OpenAI-compatible server under the decis
     expect(String(url)).toBe("http://127.0.0.1:8080/v1/chat/completions");
     const body = JSON.parse(String(init?.body));
     expect(body).toMatchObject({ model: "qwen", messages, temperature: 0 });
-    expect(body.response_format.json_schema.schema.required).toEqual(["action", "speech", "task"]);
+    expect(body.response_format.json_schema.schema.required).toEqual([
+      "action",
+      "speech",
+      "task",
+      "outward",
+    ]);
   }).pipe(Effect.provide(services(endpoint))),
 );
 

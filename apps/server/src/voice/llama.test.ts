@@ -30,7 +30,7 @@ it("decides from an isolated process and keeps working after an interrupted deci
     expect(JSON.parse(await next)).toEqual({
       path: "/models/front.gguf",
       last: "hi",
-      keys: ["action", "speech", "task"],
+      keys: ["action", "speech", "task", "outward"],
     });
   } finally {
     await llama.dispose();

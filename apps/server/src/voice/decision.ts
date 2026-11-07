@@ -12,8 +12,9 @@ export const FRONT_DECISION_JSON_SCHEMA = {
     action: { enum: ["reply", "delegate", "note", "none"] },
     speech: { type: "string" },
     task: { type: "string" },
+    outward: { type: "boolean" },
   },
-  required: ["action", "speech", "task"],
+  required: ["action", "speech", "task", "outward"],
   additionalProperties: false,
 } as const;
 
@@ -21,12 +22,13 @@ const Decision = Schema.Struct({
   action: Schema.Literals(["reply", "delegate", "note", "none"]),
   speech: Schema.String,
   task: Schema.optional(Schema.String),
+  outward: Schema.optional(Schema.Boolean),
 });
 const decodeDecision = Schema.decodeUnknownOption(Schema.fromJsonString(Decision));
 
 /**
  * Undefined when the text is not a decision. Small models fill every field, so "none" never speaks
- * and only delegate and note carry a task.
+ * and only delegate and note carry a task or an outward flag.
  */
 export function parseFrontDecision(text: string): FrontDecision | undefined {
   const decoded = decodeDecision(text.trim());
@@ -34,5 +36,11 @@ export function parseFrontDecision(text: string): FrontDecision | undefined {
   const { action } = decoded.value;
   const speech = action === "none" ? "" : decoded.value.speech.trim();
   const task = action === "delegate" || action === "note" ? decoded.value.task?.trim() : undefined;
-  return task ? { action, speech, task } : { action, speech };
+  const sends = action === "delegate" || action === "note";
+  return {
+    action,
+    speech,
+    ...(task ? { task } : {}),
+    ...(sends && decoded.value.outward === true ? { outward: true } : {}),
+  };
 }
