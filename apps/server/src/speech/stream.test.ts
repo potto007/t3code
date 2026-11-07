@@ -80,6 +80,7 @@ it.live("acknowledges binary audio and returns the finalized transcript over a r
       expect(received).toEqual([0.25, 0.5]);
       return "hello world";
     }),
+    segment: Effect.die("unused"),
     next: Effect.die("unused"),
   };
   return withServer(
@@ -111,6 +112,7 @@ it.live("releases in-flight inference after disconnect", () => {
   const stream: SpeechStream = {
     feed: () => Effect.sync(() => feeding.resolve()).pipe(Effect.andThen(Effect.never)),
     finish: Effect.succeed("unexpected"),
+    segment: Effect.die("unused"),
     next: Effect.die("unused"),
   };
   return withServer(
@@ -152,6 +154,7 @@ it.live("processes pipelined audio before the finish command", () => {
       expect(received).toEqual([0.25, 0.5]);
       return "done";
     }),
+    segment: Effect.die("unused"),
     next: Effect.die("unused"),
   };
   return withServer(

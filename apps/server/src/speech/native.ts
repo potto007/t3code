@@ -166,6 +166,17 @@ process.on("message", async (message) => {
       resetAsr();
       audio = undefined;
       process.send({ type: "t3-speech-reply", ok: true, text });
+    } else if (message.kind === "segment") {
+      // Closes the words so far and keeps listening: audio, silence detector and positions carry on.
+      let text = "";
+      if (nativeStreaming && heardAudio) {
+        await stream.finalize();
+        text = stream.text.full;
+        resetAsr();
+        heardAudio = false;
+        await openAsr();
+      }
+      process.send({ type: "t3-speech-reply", ok: true, text });
     } else if (message.kind === "reset") {
       resetAsr();
       if (vad) await vad.streamReset();
@@ -423,6 +434,12 @@ async function loadNativeSpeechModelOnce(
     },
     finish: async () => {
       const reply = await send({ kind: "finish" });
+      if (typeof reply.text !== "string") throw new Error("Invalid speech stream response.");
+      return reply.text;
+    },
+    /** Finalizes the words heard so far in this utterance, which then continues. */
+    segment: async () => {
+      const reply = await send({ kind: "segment" });
       if (typeof reply.text !== "string") throw new Error("Invalid speech stream response.");
       return reply.text;
     },

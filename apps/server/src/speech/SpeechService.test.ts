@@ -32,6 +32,7 @@ const native = vi.hoisted(() => ({
     text: { committed: "", tentative: "hello" },
   })),
   finish: vi.fn(async () => "hello"),
+  segment: vi.fn(async () => ""),
   reset: vi.fn(async () => {}),
   dispose: vi.fn(),
   transcribe: vi.fn(async (_pcm: Float32Array, _options?: unknown) => ({ text: "hello" })),
@@ -838,6 +839,7 @@ it.effect.each([false, true])(
           text: { committed: "", tentative: "" },
         })),
         finish: vi.fn(async () => "Robert"),
+        segment: vi.fn(async () => ""),
         dispose: vi.fn(),
       };
       const gpu = {
@@ -855,11 +857,23 @@ it.effect.each([false, true])(
           speechLanguage: "fr",
           speechCustomWords: [{ term: "Bob", aliases: ["Robert"] }],
         });
-        for (const chunk of chunks) yield* stream.feed(new Uint8Array(chunk.buffer));
+        for (const chunk of chunks) {
+          yield* stream.feed(new Uint8Array(chunk.buffer));
+          if (chunk === chunks[0]) yield* stream.segment;
+        }
         expect(yield* stream.finish).toBe("Bob");
         expect(cpu.feed.mock.calls.map(([chunk]) => [...chunk])).toEqual(
           chunks.map((chunk) => [...chunk]),
         );
+        // The replay closes the segment where the first worker did, so its words never repeat.
+        if (withAudio)
+          expect(cpu.segment.mock.invocationCallOrder[0]).toBeGreaterThan(
+            cpu.feed.mock.invocationCallOrder[0]!,
+          );
+        if (withAudio)
+          expect(cpu.segment.mock.invocationCallOrder[0]).toBeLessThan(
+            cpu.feed.mock.invocationCallOrder[1]!,
+          );
         expect(cpu.begin).toHaveBeenCalledWith(
           { timestamps: "none", language: "fr" },
           true,

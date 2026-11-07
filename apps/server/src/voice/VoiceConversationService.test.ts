@@ -210,6 +210,12 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
         };
       }),
     finish: Effect.die("unused"),
+    // A pause closes the words so far; the recognizer starts over on what follows.
+    segment: Effect.sync(() => {
+      const words = text;
+      text = "";
+      return words;
+    }),
     next: Effect.sync(() => {
       const utterance = text;
       text = "";
@@ -236,6 +242,7 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
     }),
   );
   // A thousand samples a word, one chunk per sentence.
+  const synthesized = yield* Queue.unbounded<string>();
   const tts = Layer.succeed(
     TextToSpeech.TextToSpeech,
     TextToSpeech.TextToSpeech.of({
@@ -243,6 +250,7 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
       hold: hold("tts"),
       synthesize: (text) =>
         Stream.fromIterable(splitSentences(text)).pipe(
+          Stream.tap((sentence) => Queue.offer(synthesized, sentence)),
           Stream.map((sentence) => new Float32Array(sentence.split(" ").length * 1000)),
         ),
     }),
@@ -340,7 +348,7 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
   });
   const decide = (decision: FrontModel.FrontDecision) =>
     Queue.offer(decisions, Effect.succeed(decision));
-  return { layer, call, decide, decisions, asked, asking, held, prompts };
+  return { layer, call, decide, decisions, asked, asking, synthesized, held, prompts };
 });
 
 const isState = (state: string) => (output: VoiceCallOutput) =>
@@ -606,6 +614,30 @@ it.effect("sends an outward request only after a spoken yes", () =>
       assert.deepStrictEqual(test.prompts, [
         "open a pull request\n\nVoice assistant's reading: Open a pull request.",
       ]);
+    }).pipe(Effect.provide(test.layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("discards an answer prepared in a pause once the user goes on", () =>
+  Effect.gen(function* () {
+    const test = yield* harness("speculation", []);
+    yield* Effect.gen(function* () {
+      const { until, say, pause, seen } = yield* test.call();
+      yield* say("run the tests");
+      yield* test.decide({ action: "delegate", speech: "On it.", task: "Run the tests." });
+      yield* pause(500);
+      // The pause prepared a delegation and rendered its first words, but holds both.
+      yield* Queue.take(test.asking);
+      assert.strictEqual(yield* Queue.take(test.synthesized), "On it.");
+      yield* say("and lint");
+      yield* test.decide({ action: "reply", speech: "Lint is clean." });
+      yield* pause(1500);
+      const answered = yield* until((output) => output.type === "speak");
+      assert.deepStrictEqual(lastUser(test.asked[1]!), "run the tests and lint");
+      assert.deepStrictEqual(spoken(answered), ["Lint is clean."]);
+      assert.isFalse(seen.some((output) => output.type === "delegated"));
+      assert.isFalse(seen.some((output) => output.type === "audio" && output.seq !== 1));
+      assert.deepStrictEqual(test.prompts, []);
     }).pipe(Effect.provide(test.layer));
   }).pipe(Effect.scoped),
 );

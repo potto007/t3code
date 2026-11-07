@@ -18,7 +18,12 @@ import * as Scope from "effect/Scope";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SpeechService from "../speech/SpeechService.ts";
 import * as TextToSpeech from "../speech/TextToSpeech.ts";
-import { DEFAULT_TURN_SETTINGS, makeTurnDetector } from "../speech/turns.ts";
+import {
+  DEFAULT_TURN_SETTINGS,
+  makeTurnDetector,
+  pauseText,
+  utteranceWords,
+} from "../speech/turns.ts";
 import {
   cancelSpeech,
   confirmationReadback,
@@ -37,7 +42,13 @@ import {
   noteText,
   type FrontInput,
 } from "./prompts.ts";
-import { makeSpeaker, type Speaker, type VoiceCallOutput } from "./speaker.ts";
+import { makeSpeaker, type PreparedSpeech, type Speaker, type VoiceCallOutput } from "./speaker.ts";
+import {
+  IDLE_SPECULATION,
+  stepSpeculation,
+  type Speculation,
+  type SpeculationEvent,
+} from "./speculation.ts";
 import { classifyInterruption, ECHO_WINDOW_SAMPLES, heardOnlyEcho } from "./turnTaking.ts";
 
 export type { VoiceCallOutput } from "./speaker.ts";
@@ -144,11 +155,23 @@ const make = Effect.gen(function* () {
     /** Mic samples since the call began, muted or not: the call's clock. */
     let clock = 0;
     let silent = 0;
-    let utterance = { text: "", heard: false };
+    /** `said` is finalized at pauses; `text` is the live rest after it. */
+    let utterance = { said: "", text: "", heard: false };
     /** Speech that started while the voice was speaking, and what the voice had left to say. */
     let interruption: { start: number; rest: string | undefined } | undefined;
     let pending: FrontInput[] = [];
     let thinking: { fiber: Fiber.Fiber<void>; inputs: readonly FrontInput[] } | undefined;
+    /** An answer prepared during a pause, held until the turn ends. */
+    let early: Speculation = IDLE_SPECULATION;
+    let earlyRun:
+      | {
+          fiber: Fiber.Fiber<void>;
+          inputs: readonly FrontInput[];
+          commit: Deferred.Deferred<void>;
+        }
+      | undefined;
+    /** Bumped whenever input reaches the front other than through the user's turn. */
+    let context = 0;
     const notes: string[] = [];
     const runs = new Set<RunId>();
     let playedWords: { word: string; at: number }[] = [];
@@ -239,6 +262,7 @@ const make = Effect.gen(function* () {
         status: run.status,
         text: answer?.type === "assistant_message" ? answer.text : "",
       });
+      context++;
     });
     const follow = Effect.fn("VoiceConversationService.follow")(function* (runId: RunId) {
       if (runs.has(runId)) return;
@@ -269,13 +293,14 @@ const make = Effect.gen(function* () {
     const act = Effect.fn("VoiceConversationService.act")(function* (
       decision: FrontModel.FrontDecision,
       inputs: readonly FrontInput[],
+      prepared?: PreparedSpeech,
     ) {
       const speech = limitSpeech(decision.speech);
       const said = inputs.flatMap((input) => (input.type === "user" ? [input.text] : [])).join(" ");
       // Only the user starts work: acting on a bare agent result would loop run after run.
       const steersNote = decision.action === "note" && runs.size > 0;
       if (!said || !(decision.action === "delegate" || steersNote)) {
-        if (speech) yield* speaker.speak(speech);
+        if (speech) yield* speaker.speak(speech, prepared);
         if (said && decision.action === "note") yield* deliverNote(decision.task?.trim() || said);
         return;
       }
@@ -293,10 +318,12 @@ const make = Effect.gen(function* () {
       const outward =
         decision.outward === true || [said, task, ...taken].some((text) => isOutwardRequest(text));
       if (!outward) {
-        if (speech) yield* speaker.speak(speech);
+        if (speech) yield* speaker.speak(speech, prepared);
         return yield* deliver;
       }
       const id = ++confirmations;
+      // An answer prepared meanwhile assumed no question was pending.
+      context++;
       confirming = {
         id,
         state: startConfirmation(),
@@ -335,33 +362,61 @@ const make = Effect.gen(function* () {
       yield* refresh;
     });
 
+    /**
+     * Decides and acts on one turn. An early turn decides and renders its first piece, then
+     * waits for `commit`: nothing it does reaches the user or the thread before that.
+     */
+    const respond = Effect.fn("VoiceConversationService.respond")(
+      function* (inputs: readonly FrontInput[], commit: Deferred.Deferred<void> | undefined) {
+        const answer = yield* Effect.gen(function* () {
+          const decision = yield* front.decide(history.messages(inputs));
+          const speech = limitSpeech(decision.speech);
+          const prepared =
+            commit && speech
+              ? yield* speaker
+                  .prepare(speech)
+                  .pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("voice call could not render early", { cause }).pipe(
+                        Effect.as(undefined),
+                      ),
+                    ),
+                  )
+              : undefined;
+          return { decision, prepared };
+        }).pipe(Effect.exit);
+        if (commit) yield* Deferred.await(commit);
+        const { decision, prepared } = yield* answer;
+        // Committed before acting, so a barge-in from here on no longer takes the turn back.
+        history.commit(inputs, decision);
+        thinking = undefined;
+        yield* act(decision, inputs, prepared);
+      },
+      // The user hears that the turn failed rather than waiting on silence.
+      Effect.catch((cause) =>
+        Effect.logError("voice call turn failed", { cause }).pipe(
+          Effect.andThen(speaker.speak("Sorry, that didn't work. Please try again.")),
+          Effect.asVoid,
+        ),
+      ),
+      (effect, inputs) =>
+        Effect.ensuring(
+          effect,
+          Effect.suspend(() => {
+            if (thinking?.inputs === inputs) thinking = undefined;
+            return think.pipe(Effect.andThen(refresh));
+          }),
+        ),
+      Effect.forkIn(scope),
+    );
+
     // The front answers once the user has finished: what they say next joins this turn.
     const think: Effect.Effect<void> = Effect.suspend(() => {
       if (thinking || confirming || pending.length === 0 || utterance.heard || interruption)
         return Effect.void;
       const inputs = nextTurn(pending);
       pending = pending.slice(inputs.length);
-      return Effect.gen(function* () {
-        const decision = yield* front.decide(history.messages(inputs));
-        // Committed before acting, so a barge-in from here on no longer takes the turn back.
-        history.commit(inputs, decision);
-        thinking = undefined;
-        yield* act(decision, inputs);
-      }).pipe(
-        // The user hears that the turn failed rather than waiting on silence.
-        Effect.catch((cause) =>
-          Effect.logError("voice call turn failed", { cause }).pipe(
-            Effect.andThen(speaker.speak("Sorry, that didn't work. Please try again.")),
-            Effect.asVoid,
-          ),
-        ),
-        Effect.ensuring(
-          Effect.suspend(() => {
-            if (thinking?.inputs === inputs) thinking = undefined;
-            return think.pipe(Effect.andThen(refresh));
-          }),
-        ),
-        Effect.forkIn(scope),
+      return respond(inputs, undefined).pipe(
         Effect.flatMap((fiber) =>
           Effect.sync(() => {
             thinking = { fiber, inputs };
@@ -370,17 +425,50 @@ const make = Effect.gen(function* () {
         Effect.andThen(refresh),
       );
     });
+
+    // The turn as it would be if the user stopped now: only when their words lead it.
+    const earlyInputs = (text: string) => {
+      if (thinking || confirming || interruption || muted) return undefined;
+      const user: FrontInput = { type: "user", text };
+      const inputs = nextTurn([...pending, user]);
+      return inputs.at(-1) === user ? inputs : undefined;
+    };
+    const speculate = Effect.fn("VoiceConversationService.speculate")(function* (
+      event: SpeculationEvent,
+    ) {
+      const inputs = event.type === "pause" ? earlyInputs(event.text) : undefined;
+      if (event.type === "pause" && !inputs) return;
+      const step = stepSpeculation(early, event);
+      early = step.state;
+      const run = earlyRun;
+      if (step.effect === "start" && inputs) {
+        const commit = yield* Deferred.make<void>();
+        earlyRun = { fiber: yield* respond(inputs, commit), inputs, commit };
+      } else if (step.effect === "discard" && run) {
+        earlyRun = undefined;
+        yield* Fiber.interrupt(run.fiber);
+      } else if (step.effect === "commit" && run) {
+        earlyRun = undefined;
+        // The user's own words were never queued; anything ahead of them in the turn was.
+        pending = pending.slice(run.inputs.length - 1);
+        thinking = { fiber: run.fiber, inputs: run.inputs };
+        yield* Deferred.succeed(run.commit, undefined);
+        yield* refresh;
+      }
+      return step.effect;
+    });
     const stopThinking = Effect.suspend(() => {
       const current = thinking;
       if (!current) return Effect.void;
       thinking = undefined;
       pending = [...current.inputs, ...pending];
+      context++;
       return Fiber.interrupt(current.fiber).pipe(Effect.andThen(refresh));
     });
 
     const nextUtterance = Effect.fn("VoiceConversationService.nextUtterance")(function* () {
-      const text = yield* stt.next;
-      utterance = { text: "", heard: false };
+      const text = utteranceWords(utterance.said, yield* stt.next);
+      utterance = { said: "", text: "", heard: false };
       detector.reset();
       return text;
     });
@@ -393,25 +481,34 @@ const make = Effect.gen(function* () {
       const update = yield* stt.feed(pcm);
       if (update.text) {
         utterance.text = `${update.text.committed}${update.text.tentative}`;
-        yield* send({ type: "caption", who: "you", ...update.text });
+        yield* send({
+          type: "caption",
+          who: "you",
+          committed: utteranceWords(utterance.said, update.text.committed),
+          tentative: update.text.tentative,
+        });
       }
       const chunkStart = update.samples - pcm.byteLength / 4;
       const turn = detector.observe({
         samples: update.samples,
         voicedUntil: update.voicedUntil,
-        text: utterance.text,
+        text: pauseText(utterance.said, utterance.text),
       });
+      const words = utteranceWords(utterance.said, utterance.text);
       if (turn.heard) utterance.heard = true;
+      // Speech or new words after a pause make an early answer stale.
+      if (turn.heard) yield* speculate({ type: "speech" });
+      else if (update.text) yield* speculate({ type: "text", text: words });
       if (turn.speechStarted) {
         yield* stopThinking;
         if (speaker.busy() && !interruption) interruption = { start: chunkStart, rest: undefined };
       }
       if (interruption) {
         // Speech over the voice pauses it, unless every word so far is the voice's own echo.
-        if (interruption.rest === undefined && !heardOnlyEcho(utterance.text, echo()))
+        if (interruption.rest === undefined && !heardOnlyEcho(words, echo()))
           interruption.rest = yield* speaker.cut;
         const verdict = classifyInterruption({
-          text: utterance.text,
+          text: words,
           start: interruption.start,
           voicedUntil: update.voicedUntil,
           samples: update.samples,
@@ -433,11 +530,26 @@ const make = Effect.gen(function* () {
         }
       }
       if (turn.ended) {
-        const text = (yield* nextUtterance()).trim();
+        // An early answer goes out first; the stream resets behind it.
+        const answered =
+          (yield* speculate({ type: "endpoint", text: words, context })) === "commit";
+        if (answered) yield* send({ type: "caption", who: "you", committed: words, tentative: "" });
+        const said = (yield* nextUtterance()).trim();
+        // Words finalized only now, after an early answer, are a turn of their own.
+        const text = answered ? said.slice(words.length).trim() : said;
         if (text) {
-          yield* send({ type: "caption", who: "you", committed: text, tentative: "" });
+          if (!answered)
+            yield* send({ type: "caption", who: "you", committed: text, tentative: "" });
           yield* heard(text);
         }
+      } else if (turn.paused) {
+        // A pause: close the words so far, and prepare the answer they would get.
+        const said = yield* stt.segment;
+        if (said) {
+          utterance.said = utteranceWords(utterance.said, said);
+          utterance.text = "";
+        }
+        yield* speculate({ type: "pause", text: utterance.said, context });
       }
       yield* think;
       return turn;
@@ -453,7 +565,11 @@ const make = Effect.gen(function* () {
             type: "audio",
             samples,
             voicePlaying: speaker.busy(),
-            userSpeaking: turn?.heard === true || utterance.text.trim() !== "" || !!interruption,
+            userSpeaking:
+              turn?.heard === true ||
+              utterance.said !== "" ||
+              utterance.text.trim() !== "" ||
+              !!interruption,
           });
           silent = turn?.heard || state !== "listening" ? 0 : silent + samples;
           if (silent >= idleSamples) {
@@ -471,7 +587,8 @@ const make = Effect.gen(function* () {
       mute: Effect.gen(function* () {
         muted = true;
         interruption = undefined;
-        if (utterance.text || utterance.heard) {
+        yield* speculate({ type: "speech" });
+        if (utterance.said || utterance.text || utterance.heard) {
           yield* nextUtterance();
           yield* send({ type: "caption", who: "you", committed: "", tentative: "" });
           yield* think;

@@ -126,6 +126,12 @@ it("returns streaming previews and final text from an isolated process", async (
       text: { committed: "hello ", tentative: "world" },
     });
     expect(await model.finish()).toBe("hello world");
+    // A segment closes the words so far; the utterance goes on without repeating them.
+    await model.begin({ timestamps: "none" }, false);
+    await model.feed(new Float32Array(512).fill(0.25));
+    expect(await model.segment()).toBe("hello world");
+    expect(await model.segment()).toBe("");
+    expect(await model.finish()).toBe("");
     await model.begin({ timestamps: "none", language: "fr" }, false);
     await model.reset();
     await model.begin({ timestamps: "none", language: "fr" }, false);

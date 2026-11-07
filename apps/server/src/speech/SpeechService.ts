@@ -125,6 +125,11 @@ type SpeechModels = { readonly models: ReadonlyArray<EnvironmentSpeechModel> };
 export type SpeechStream = {
   readonly feed: (pcm: Uint8Array) => Effect.Effect<SpeechStreamUpdate, SpeechError>;
   readonly finish: Effect.Effect<string, SpeechError>;
+  /**
+   * Finalizes the words heard so far, which the next feeds no longer repeat. The utterance
+   * and its sample positions continue.
+   */
+  readonly segment: Effect.Effect<string, SpeechError>;
   /** Finishes the current utterance and starts the next one on the same model. */
   readonly next: Effect.Effect<string, SpeechError>;
 };
@@ -783,6 +788,8 @@ const make = Effect.gen(function* () {
     };
     // Audio already fed is kept so a CPU restart can replay it; the limit caps it at one utterance.
     let received: Float32Array[] = [];
+    /** How many received chunks each segment covered, so a replay cuts in the same places. */
+    let segments: number[] = [];
     let retriedOnCpu = false;
     const recoverOnCpu = async (cause: unknown) => {
       started = false;
@@ -797,9 +804,10 @@ const make = Effect.gen(function* () {
       loaded = streamModel;
       await beginStream();
       let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
-      for (const chunk of received) {
+      for (const [index, chunk] of received.entries()) {
         if (closed || signal.aborted) throw new Error("Speech stream is closed.");
         update = await streamModel.feed(chunk);
+        if (segments.includes(index + 1)) await streamModel.segment();
       }
       return update;
     };
@@ -816,6 +824,12 @@ const make = Effect.gen(function* () {
     // Client revisions stay monotonic across a native restart, whose own counter resets.
     let revisionBase = 0;
     let lastNativeRevision = 0;
+    const finalText = (text: string) =>
+      finalizeTranscript(
+        correct(text),
+        options,
+        translateToEnglish ? "en" : language === "auto" ? undefined : language,
+      );
     const finishUtterance = async () => {
       let text: string;
       try {
@@ -828,11 +842,7 @@ const make = Effect.gen(function* () {
         started = false;
         throw cause;
       }
-      return finalizeTranscript(
-        correct(text),
-        options,
-        translateToEnglish ? "en" : language === "auto" ? undefined : language,
-      );
+      return finalText(text);
     };
     const run = <A>(work: () => Promise<A>) =>
       attempt(operation, async () => {
@@ -886,9 +896,19 @@ const make = Effect.gen(function* () {
         finished = true;
         return text;
       }),
+      segment: run(async () => {
+        const text = await streamModel.segment().catch(async (cause: unknown) => {
+          await recoverOnCpu(cause);
+          if (closed || signal.aborted) throw cause;
+          return streamModel.segment();
+        });
+        segments.push(received.length);
+        return finalText(text);
+      }),
       next: run(async () => {
         const text = await finishUtterance();
         received = [];
+        segments = [];
         byteLength = samples = 0;
         revisionBase += lastNativeRevision;
         lastNativeRevision = 0;

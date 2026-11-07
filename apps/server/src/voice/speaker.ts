@@ -16,9 +16,17 @@ export type VoiceCallOutput =
   | VoiceConversationEvent
   | { readonly type: "audio"; readonly seq: number; readonly pcm: Float32Array };
 
+/** The first piece of an answer, rendered before the turn commits and not yet sent. */
+export type PreparedSpeech = {
+  readonly text: string;
+  readonly piece: string;
+  readonly pcm: Float32Array;
+};
+
 type Utterance = {
   readonly seq: number;
   readonly text: string;
+  readonly audio: Stream.Stream<Float32Array, TextToSpeech.TextToSpeechError>;
   readonly sentences: SpokenSentence[];
   sent: number;
   rendered: boolean;
@@ -54,7 +62,7 @@ export const makeSpeaker = Effect.fn("VoiceSpeaker.make")(function* (input: {
   };
   const play = Effect.fn("VoiceSpeaker.play")(function* (utterance: Utterance) {
     let sentence = 0;
-    yield* tts.synthesize(utterance.text, input.voice).pipe(
+    yield* utterance.audio.pipe(
       Stream.runForEach((pcm) =>
         Effect.gen(function* () {
           for (let start = 0; start < pcm.length; start += FRAME_SAMPLES) {
@@ -94,14 +102,39 @@ export const makeSpeaker = Effect.fn("VoiceSpeaker.make")(function* (input: {
     /** Speaking, in the contract's sense: queued, rendering, or not yet heard to the end. */
     busy: () =>
       live().some((utterance) => !utterance.rendered || utterance.played < utterance.sent),
+    /** Renders the first piece of an answer without sending anything. */
+    prepare: Effect.fn("VoiceSpeaker.prepare")(function* (markdown: string) {
+      const text = speakableText(markdown);
+      const piece = splitSentences(text)[0];
+      if (!piece) return undefined;
+      const chunks = yield* tts.synthesize(piece, input.voice).pipe(Stream.runCollect);
+      const pcm = new Float32Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+      let offset = 0;
+      for (const chunk of chunks) {
+        pcm.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return { text, piece, pcm } satisfies PreparedSpeech;
+    }),
     /** Every spoken text passes here, so markdown is stripped once for all of them. */
-    speak: Effect.fn("VoiceSpeaker.speak")(function* (markdown: string) {
+    speak: Effect.fn("VoiceSpeaker.speak")(function* (markdown: string, prepared?: PreparedSpeech) {
       const text = speakableText(markdown);
       if (!text) return undefined;
+      const ready = prepared?.text === text ? prepared : undefined;
+      const rest = ready ? splitSentences(text).slice(1).join(" ") : text;
+      const pieces = splitSentences(rest);
       const utterance: Utterance = {
         seq: ++lastSeq,
         text,
-        sentences: splitSentences(text).map((sentence) => ({ text: sentence })),
+        audio: ready
+          ? Stream.concat(
+              Stream.make(ready.pcm),
+              pieces.length > 0 ? tts.synthesize(rest, input.voice) : Stream.empty,
+            )
+          : tts.synthesize(text, input.voice),
+        sentences: [...(ready ? [ready.piece] : []), ...pieces].map((sentence) => ({
+          text: sentence,
+        })),
         sent: 0,
         rendered: false,
         played: 0,
