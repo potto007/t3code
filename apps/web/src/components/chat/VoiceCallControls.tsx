@@ -1,9 +1,11 @@
 import type { VoiceCallCaption, VoiceCallPhase } from "@t3tools/client-runtime/voice-call";
 import { useNavigate } from "@tanstack/react-router";
-import { AudioLinesIcon, MicIcon, MicOffIcon, PhoneOffIcon } from "lucide-react";
+import { AudioLinesIcon, CheckIcon, MicIcon, MicOffIcon, PhoneOffIcon, XIcon } from "lucide-react";
+import { useEffect } from "react";
 
 import { cn } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { registerCommands } from "../../shortcuts/dispatcher";
 import type { ActiveVoiceCall } from "../../speech/voiceCall";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -14,6 +16,7 @@ const PHASE_LABELS: Record<VoiceCallPhase, string> = {
   listening: "Listening",
   thinking: "Thinking",
   speaking: "Speaking",
+  confirming: "Waiting for your yes",
   delegated: "Agent is working",
   ended: "Ended",
 };
@@ -63,10 +66,54 @@ function Caption(props: { who: string; caption: VoiceCallCaption | null }) {
   );
 }
 
+/** An outward request the call holds until the user says yes, here or out loud. */
+function VoiceCallConfirmation(props: { text: string; onAnswer(confirm: boolean): void }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-border/60 bg-background px-2 py-1.5">
+      <p className="min-w-0 flex-1 break-words">{props.text}</p>
+      <Button
+        type="button"
+        size="sm"
+        variant="default"
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={() => props.onAnswer(true)}
+      >
+        <CheckIcon />
+        Confirm
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={() => props.onAnswer(false)}
+      >
+        <XIcon />
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
 /** The live call: who said what, and the way out. Static styling only; captions carry the motion. */
 export function VoiceCallStrip(props: { call: ActiveVoiceCall; onThisThread: boolean }) {
   const navigate = useNavigate();
   const { state, call, threadRef } = props.call;
+  const confirming = state.confirm !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the confirm and cancel shortcuts while a request waits
+  useEffect(() => {
+    if (!confirming) return;
+    return registerCommands({
+      "composer.voiceCallConfirm": (event) => {
+        event.preventDefault();
+        if (!event.repeat) call.answer(true);
+      },
+      "composer.voiceCallCancel": (event) => {
+        event.preventDefault();
+        if (!event.repeat) call.answer(false);
+      },
+    });
+  }, [call, confirming]);
   return (
     <div
       role="region"
@@ -129,6 +176,9 @@ export function VoiceCallStrip(props: { call: ActiveVoiceCall; onThisThread: boo
           Stop
         </Button>
       </div>
+      {state.confirm ? (
+        <VoiceCallConfirmation text={state.confirm.text} onAnswer={call.answer} />
+      ) : null}
       {props.onThisThread ? (
         <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
           <Caption who="You" caption={state.you} />

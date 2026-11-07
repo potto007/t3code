@@ -156,6 +156,18 @@ it at an OpenAI-compatible server you already run. Voice
 calls are not available on iPhone and Android yet. There is no default shortcut;
 bind **Composer: Start or Stop Voice Call** in **Settings → Keybindings**.
 
+### Confirm outward requests
+
+Before a call sends work that would reach past your checkout, such as opening,
+merging, or commenting on pull requests and issues, pushing, deploying,
+publishing, or messaging someone, the voice reads the request back in one
+sentence and waits. Say "yes", "go ahead", or "do it" once it has finished, or
+press **Confirm** in the call strip. Saying no, staying quiet for 8 seconds,
+saying something else, or hanging up cancels it, and nothing is sent. A
+"mm-hm" or "okay" while it is still reading back doesn't count as a yes. The
+command palette offers **Confirm voice call request** and **Cancel voice call
+request** while one waits, and you can bind both in **Settings → Keybindings**.
+
 ## Test and troubleshoot
 
 In **Settings → Voice**, **Test microphone** beside the microphone selector

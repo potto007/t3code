@@ -27,6 +27,8 @@ export type VoiceCallState = {
   readonly you: VoiceCallCaption | null;
   readonly voice: VoiceCallCaption | null;
   readonly delegated: { readonly runId: string; readonly text: string } | null;
+  /** An outward request waiting for a yes; `text` is what the voice read back. */
+  readonly confirm: { readonly id: number; readonly text: string } | null;
   readonly ended: VoiceCallEnd | null;
 };
 
@@ -36,6 +38,7 @@ const INITIAL_VOICE_CALL_STATE: VoiceCallState = {
   you: null,
   voice: null,
   delegated: null,
+  confirm: null,
   ended: null,
 };
 
@@ -83,6 +86,8 @@ export type VoiceCallInput = {
 export type VoiceCall = {
   readonly state: () => VoiceCallState;
   readonly setMuted: (muted: boolean) => void;
+  /** Confirm or Cancel the pending request, the same as saying yes or no. */
+  readonly answer: (confirm: boolean) => void;
   readonly stop: () => void;
 };
 
@@ -177,6 +182,12 @@ export function startVoiceCall(input: VoiceCallInput): VoiceCall {
       case "delegated":
         update({ delegated: { runId: event.runId, text: event.text } });
         return;
+      case "confirm":
+        update({ confirm: { id: event.id, text: event.text } });
+        return;
+      case "confirmed":
+        if (state.confirm?.id === event.id) update({ confirm: null });
+        return;
       case "idle":
         return end({ reason: "idle" });
       case "error":
@@ -246,6 +257,10 @@ export function startVoiceCall(input: VoiceCallInput): VoiceCall {
       if (state.ended || state.muted === muted) return;
       send({ type: muted ? "mute" : "unmute" });
       update({ muted });
+    },
+    answer: (confirm) => {
+      if (state.ended || !state.confirm) return;
+      send({ type: "answer", id: state.confirm.id, confirm });
     },
     stop: () => end({ reason: "stopped" }),
   };

@@ -375,6 +375,8 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
   if (command === "composer.dictation") return "Composer: Start or Finish Dictation";
   if (command === "composer.voiceCall") return "Composer: Start or Stop Voice Call";
+  if (command === "composer.voiceCallConfirm") return "Voice Call: Confirm Request";
+  if (command === "composer.voiceCallCancel") return "Voice Call: Cancel Request";
   if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
   if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
   if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";

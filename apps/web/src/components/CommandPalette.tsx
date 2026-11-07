@@ -78,6 +78,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  XIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { useActiveVoiceCall, useVoiceCallStarter } from "../speech/voiceCall";
@@ -1333,6 +1334,28 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "composer.voiceCall",
       run: async () => call.stop(),
     });
+    if (activeVoiceCall.state.confirm) {
+      actionItems.push(
+        {
+          kind: "action",
+          value: "action:confirm-voice-call-request",
+          title: "Confirm voice call request",
+          searchTerms: ["voice", "call", "confirm", "yes", "send"],
+          icon: <CheckIcon className={ITEM_ICON_CLASS} />,
+          shortcutCommand: "composer.voiceCallConfirm",
+          run: async () => call.answer(true),
+        },
+        {
+          kind: "action",
+          value: "action:cancel-voice-call-request",
+          title: "Cancel voice call request",
+          searchTerms: ["voice", "call", "cancel", "no", "decline"],
+          icon: <XIcon className={ITEM_ICON_CLASS} />,
+          shortcutCommand: "composer.voiceCallCancel",
+          run: async () => call.answer(false),
+        },
+      );
+    }
   } else if (startVoiceCall) {
     actionItems.push({
       kind: "action",

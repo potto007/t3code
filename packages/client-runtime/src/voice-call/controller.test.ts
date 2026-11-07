@@ -157,6 +157,28 @@ it("tracks captions, state and delegation", async () => {
   });
 });
 
+it("shows a pending confirmation until it ends and answers it by id", async () => {
+  const { socket, voiceCall, ready } = await call();
+  ready();
+  voiceCall.answer(true);
+  socket.receive({ type: "confirm", id: 4, text: 'Send "Push the branch" to the agent?' });
+  socket.receive({ type: "state", state: "confirming" });
+  expect(voiceCall.state()).toMatchObject({
+    phase: "confirming",
+    confirm: { id: 4, text: 'Send "Push the branch" to the agent?' },
+  });
+  voiceCall.answer(false);
+  // A stale end leaves the current confirmation up.
+  socket.receive({ type: "confirmed", id: 3, sent: true });
+  expect(voiceCall.state().confirm).toMatchObject({ id: 4 });
+  socket.receive({ type: "confirmed", id: 4, sent: false });
+  expect(voiceCall.state().confirm).toBeNull();
+  voiceCall.answer(true);
+  expect(socket.commands().filter((command) => command.type === "answer")).toEqual([
+    { type: "answer", id: 4, confirm: false },
+  ]);
+});
+
 it("tells the environment about mute and keeps audio flowing for the idle timeout", async () => {
   const { socket, pcm, voiceCall, ready } = await call();
   ready();
