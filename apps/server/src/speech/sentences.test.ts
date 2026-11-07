@@ -8,6 +8,15 @@ it.each([
   ["Okay... ", ["Okay..."]],
   ["- ", []],
   ["", []],
+  [
+    "The server tests pass, but the reconnect test times out. Want details?",
+    ["The server tests pass,", "but the reconnect test times out.", "Want details?"],
+  ],
+  ["Yes, the server tests pass.", ["Yes, the server tests pass."]],
+  [
+    "Sure, the reconnect test in the server package times out. Done, mostly.",
+    ["Sure, the reconnect test in the server package times out.", "Done, mostly."],
+  ],
 ])("splits %j into sentences", (text, sentences) => {
   expect(splitSentences(text)).toEqual(sentences);
 });
