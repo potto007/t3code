@@ -304,3 +304,45 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     path: (urls) => urls.removeModel(),
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
   });
+
+export const getEnvironmentVoiceFrontModels = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.frontModels(),
+    run: ({ client, headers }) => client.frontModels({ headers }),
+  });
+
+/** Resolves once the model is installed; poll the catalog for progress meanwhile. */
+export const downloadEnvironmentVoiceFrontModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.downloadFrontModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.downloadFrontModel({ headers, payload: { modelId } }),
+  });
+
+export const cancelEnvironmentVoiceFrontModelDownload = (
+  prepared: PreparedConnection,
+  modelId: string,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.cancelFrontModelDownload(),
+    run: ({ client, headers }) =>
+      client.cancelFrontModelDownload({ headers, payload: { modelId } }),
+  });
+
+export const removeEnvironmentVoiceFrontModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.removeFrontModel(),
+    run: ({ client, headers }) => client.removeFrontModel({ headers, payload: { modelId } }),
+  });

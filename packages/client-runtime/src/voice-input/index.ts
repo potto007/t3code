@@ -12,8 +12,11 @@ export {
 } from "./controller.ts";
 export {
   cancelEnvironmentSpeechModelDownload,
+  cancelEnvironmentVoiceFrontModelDownload,
   downloadEnvironmentSpeechModel,
+  downloadEnvironmentVoiceFrontModel,
   getEnvironmentSpeechModels,
+  getEnvironmentVoiceFrontModels,
   getCloudSpeechKeys,
   getCloudSpeechModels,
   requireCloudSpeechKey,
@@ -24,6 +27,7 @@ export {
   getEnvironmentSpeechStreamUrl,
   postProcessEnvironmentTranscript,
   removeEnvironmentSpeechModel,
+  removeEnvironmentVoiceFrontModel,
   selectEnvironmentSpeechModel,
   transcribeEnvironmentPcm,
   updateEnvironmentSpeechAcceleration,
