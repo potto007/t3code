@@ -348,6 +348,9 @@ export function SettingsVoiceRouteScreen() {
             ? " Android may still use a different microphone if the preferred one can’t be routed."
             : null}
         </Text>
+        <Text className="px-2 text-sm text-foreground-muted">
+          Voice calls are available on web and desktop.
+        </Text>
       </ScrollView>
     </SettingsScreen>
   );

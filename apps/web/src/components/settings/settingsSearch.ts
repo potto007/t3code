@@ -544,6 +544,25 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech voice transcript cleanup provider model post-processing"],
   },
   {
+    id: "voice-call-voice",
+    title: "Call voice",
+    to: "/settings/voice",
+    searchTerms: ["voice call conversation speech tts kokoro speaker talk"],
+  },
+  {
+    id: "voice-call-front-model",
+    title: "Conversation model",
+    to: "/settings/voice",
+    scope: "environment",
+    searchTerms: ["voice call conversation front model llm gguf openai url server"],
+  },
+  {
+    id: "voice-call-idle-timeout",
+    title: "Hang up when quiet",
+    to: "/settings/voice",
+    searchTerms: ["voice call conversation idle timeout silence end"],
+  },
+  {
     id: "speech-correction-word",
     title: "Correction cue",
     to: "/settings/voice",
