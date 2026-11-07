@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { VoiceFrontModel } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -80,6 +81,49 @@ it.effect("rejects a model id outside the catalog", () =>
     const error = yield* Effect.flip(Effect.scoped(front.acquire));
     expect(error.message).toContain('Unknown front model "someone/else"');
   }).pipe(Effect.provide(services("someone/else"))),
+);
+
+it.effect("shares one download between settings and a call, and cancels it for both", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const download = vi.fn<SpeechModelStore.SpeechModelStore["Service"]["download"]>(
+      (_file, progress) =>
+        Effect.sync(() => progress?.onProgress?.(1024)).pipe(
+          Effect.andThen(Deferred.succeed(started, undefined)),
+          Effect.andThen(Effect.never),
+        ),
+    );
+    const front = yield* FrontModel.make(() => Promise.reject(new Error("not loaded"))).pipe(
+      Effect.provideService(SpeechModelStore.SpeechModelStore, {
+        isReady: () => Effect.succeed(false),
+        installedPath: () => Effect.undefined,
+        download,
+        remove: () => Effect.void,
+      }),
+    );
+    const id = "unsloth/Qwen3-1.7B-GGUF";
+    // Started at once, so each is waiting on the transfer before the next step.
+    const fromSettings = yield* Effect.forkChild(front.download(id), { startImmediately: true });
+    yield* Deferred.await(started);
+    const fromCall = yield* Effect.forkChild(Effect.scoped(front.acquire), {
+      startImmediately: true,
+    });
+    expect((yield* front.models).models).toMatchObject([
+      { id: "unsloth/Qwen3-4B-Instruct-2507-GGUF", recommended: true, state: "downloadable" },
+      { id, active: true, state: "downloading", downloaded: 1024 },
+    ]);
+    const after = yield* front.cancelDownload(id);
+    expect(after.models[1]).toMatchObject({ state: "downloadable" });
+    const errors = [
+      yield* Effect.flip(Fiber.join(fromSettings)),
+      yield* Effect.flip(Fiber.join(fromCall)),
+    ];
+    for (const error of errors) expect(error.message).toContain("download was cancelled");
+    expect(download).toHaveBeenCalledOnce();
+    expect((yield* Effect.flip(front.download("someone/else")))._tag).toBe(
+      "FrontModelNotFoundError",
+    );
+  }).pipe(Effect.provide(services("unsloth/Qwen3-1.7B-GGUF"))),
 );
 
 const endpoint = { url: "http://127.0.0.1:8080/v1/", model: "qwen" };

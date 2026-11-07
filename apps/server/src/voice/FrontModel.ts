@@ -1,5 +1,14 @@
+import {
+  DEFAULT_VOICE_FRONT_MODEL,
+  type EnvironmentVoiceFrontModel,
+  type EnvironmentVoiceFrontModels,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import { HttpClient } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as RcMap from "effect/RcMap";
@@ -9,7 +18,7 @@ import type * as Scope from "effect/Scope";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechModelStore from "../speech/SpeechModelStore.ts";
 import { parseFrontDecision } from "./decision.ts";
-import { type FrontModelEntry, getFrontModel } from "./frontModels.ts";
+import { FRONT_MODELS, type FrontModelEntry, getFrontModel } from "./frontModels.ts";
 import { type FrontLlama, loadFrontLlama } from "./llama.ts";
 import { makeOpenAiFrontSession } from "./openai.ts";
 
@@ -27,13 +36,22 @@ export interface FrontMessage {
 }
 
 export class FrontModelError extends Schema.TaggedError<FrontModelError>()("FrontModelError", {
-  operation: Schema.Literals(["download", "load", "decide"]),
+  operation: Schema.Literals(["download", "load", "decide", "remove"]),
   detail: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     const base = `The voice front model failed to ${this.operation}.`;
     return this.detail ? `${base} ${this.detail}` : base;
+  }
+}
+
+export class FrontModelNotFoundError extends Schema.TaggedError<FrontModelNotFoundError>()(
+  "FrontModelNotFoundError",
+  { modelId: Schema.String },
+) {
+  override get message(): string {
+    return `Unknown front model "${this.modelId}".`;
   }
 }
 
@@ -49,6 +67,18 @@ export class FrontModel extends Context.Service<
   {
     /** Loads the configured model (managed GGUF, or the OpenAI-compatible URL override) and keeps it loaded for the scope, e.g. one call. */
     readonly acquire: Effect.Effect<FrontModelSession, FrontModelError, Scope.Scope>;
+    readonly models: Effect.Effect<EnvironmentVoiceFrontModels, FrontModelError>;
+    /** Completes once the model is installed; progress shows in `models` meanwhile. */
+    readonly download: (
+      modelId: string,
+    ) => Effect.Effect<EnvironmentVoiceFrontModels, FrontModelError | FrontModelNotFoundError>;
+    readonly cancelDownload: (
+      modelId: string,
+    ) => Effect.Effect<EnvironmentVoiceFrontModels, FrontModelError>;
+    /** Unloads the model first, ending the front model of any call using it. */
+    readonly remove: (
+      modelId: string,
+    ) => Effect.Effect<EnvironmentVoiceFrontModels, FrontModelError | FrontModelNotFoundError>;
   }
 >()("t3/voice/FrontModel") {}
 
@@ -61,11 +91,48 @@ export const make = Effect.fn("FrontModel.make")(function* (
   const settings = yield* ServerSettings.ServerSettingsService;
   const store = yield* SpeechModelStore.SpeechModelStore;
   const http = yield* HttpClient.HttpClient;
+  const scope = yield* Effect.scope;
+  type Transfer = {
+    downloaded: number;
+    verifying: boolean;
+    readonly fiber: Deferred.Deferred<Fiber.Fiber<string, FrontModelError>>;
+  };
+  const transfers = new Map<string, Transfer>();
+  // Settings and a call's first acquire share one transfer per model.
+  const transferFiber = (model: FrontModelEntry) =>
+    Effect.suspend(() => {
+      const existing = transfers.get(model.id);
+      if (existing) return Deferred.await(existing.fiber);
+      const transfer: Transfer = { downloaded: 0, verifying: false, fiber: Deferred.makeUnsafe() };
+      transfers.set(model.id, transfer);
+      return store
+        .download(model, {
+          onProgress: (downloaded) => {
+            transfer.downloaded = downloaded;
+          },
+          onVerificationStart: () => {
+            transfer.verifying = true;
+          },
+        })
+        .pipe(
+          Effect.mapError((cause) => new FrontModelError({ operation: "download", cause })),
+          Effect.ensuring(Effect.sync(() => transfers.delete(model.id))),
+          Effect.forkIn(scope),
+          Effect.tap((fiber) => Deferred.succeed(transfer.fiber, fiber)),
+        );
+    });
+  const install = Effect.fn("FrontModel.install")(function* (model: FrontModelEntry) {
+    const exit = yield* Fiber.await(yield* transferFiber(model));
+    if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause))
+      return yield* new FrontModelError({
+        operation: "download",
+        detail: "The download was cancelled.",
+      });
+    return yield* exit;
+  });
   const workers = yield* RcMap.make({
     lookup: Effect.fn("FrontModel.load")(function* (model: FrontModelEntry) {
-      const path = yield* store
-        .download(model)
-        .pipe(Effect.mapError((cause) => new FrontModelError({ operation: "download", cause })));
+      const path = yield* install(model);
       return yield* Effect.acquireRelease(
         Effect.tryPromise({
           try: (signal) => load(path, signal),
@@ -108,7 +175,70 @@ export const make = Effect.fn("FrontModel.make")(function* (
     );
     return { decide } satisfies FrontModelSession;
   });
-  return FrontModel.of({ acquire: acquire() });
+  const models = Effect.fn("FrontModel.models")(function* () {
+    const configured = (yield* settings.getSettings.pipe(
+      Effect.mapError((cause) => new FrontModelError({ operation: "load", cause })),
+    )).voiceFrontModel;
+    const list = yield* Effect.forEach(
+      FRONT_MODELS,
+      (model) =>
+        store.isReady(model).pipe(
+          Effect.map((ready): EnvironmentVoiceFrontModel => {
+            const transfer = transfers.get(model.id);
+            return {
+              id: model.id,
+              name: model.name,
+              description: model.description,
+              size: model.size,
+              recommended: model.id === DEFAULT_VOICE_FRONT_MODEL,
+              active: model.id === configured,
+              state: transfer
+                ? transfer.verifying
+                  ? "verifying"
+                  : "downloading"
+                : ready
+                  ? "installed"
+                  : "downloadable",
+              ...(transfer ? { downloaded: transfer.downloaded } : {}),
+            };
+          }),
+        ),
+      { concurrency: "unbounded" },
+    );
+    return { models: list };
+  });
+  const find = (modelId: string) =>
+    Effect.fromNullishOr(getFrontModel(modelId)).pipe(
+      Effect.mapError(() => new FrontModelNotFoundError({ modelId })),
+    );
+  const cancel = (modelId: string) =>
+    Effect.suspend(() => {
+      const transfer = transfers.get(modelId);
+      return transfer
+        ? Deferred.await(transfer.fiber).pipe(Effect.flatMap(Fiber.interrupt))
+        : Effect.void;
+    });
+  return FrontModel.of({
+    acquire: acquire(),
+    models: models(),
+    download: Effect.fn("FrontModel.download")(function* (modelId) {
+      yield* install(yield* find(modelId));
+      return yield* models();
+    }),
+    cancelDownload: Effect.fn("FrontModel.cancelDownload")(function* (modelId) {
+      yield* cancel(modelId);
+      return yield* models();
+    }),
+    remove: Effect.fn("FrontModel.remove")(function* (modelId) {
+      const model = yield* find(modelId);
+      yield* cancel(modelId);
+      yield* RcMap.invalidate(workers, model);
+      yield* store
+        .remove(model)
+        .pipe(Effect.mapError((cause) => new FrontModelError({ operation: "remove", cause })));
+      return yield* models();
+    }),
+  });
 });
 
 export const layer = Layer.effect(FrontModel, make());

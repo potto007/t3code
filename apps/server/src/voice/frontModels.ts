@@ -7,7 +7,7 @@ export type FrontModelEntry = ModelFile & {
 
 // Chosen on 50 voice-style prompts: Qwen3 4B made no harmful calls (only note vs delegate), while
 // Gemma 4 E2B answered noise and Llama 3.2 3B and Qwen3 1.7B answered project questions themselves.
-const FRONT_MODELS: readonly FrontModelEntry[] = [
+export const FRONT_MODELS: readonly FrontModelEntry[] = [
   {
     id: "unsloth/Qwen3-4B-Instruct-2507-GGUF",
     revision: "a06e946bb6b655725eafa393f4a9745d460374c9",

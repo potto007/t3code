@@ -31,6 +31,7 @@ import * as CloudSpeech from "./CloudSpeech.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as FrontModel from "../voice/FrontModel.ts";
 import { speechHttpApiLayer } from "./http.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
@@ -49,6 +50,7 @@ const principal = (...scopes: AuthEnvironmentScope[]) =>
 
 const dependencies = Layer.mergeAll(
   Layer.mock(CloudSpeech.CloudSpeech)({}),
+  Layer.mock(FrontModel.FrontModel)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
     getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -105,6 +107,14 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
         }),
       );
       expect(select.status).toBe(403);
+      const removeFront = yield* Effect.promise(() =>
+        fetch(new URL("front-models/remove", url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ modelId: "test" }),
+        }),
+      );
+      expect(removeFront.status).toBe(403);
       const changeKey = yield* Effect.promise(() =>
         fetch(new URL("cloud/xai/key", url), {
           method: "POST",

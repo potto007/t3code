@@ -173,6 +173,23 @@ export type EnvironmentSpeechModels = typeof EnvironmentSpeechModels.Type;
 
 export const EnvironmentSpeechModelRequest = Schema.Struct({ modelId: SpeechModelId });
 
+export const EnvironmentVoiceFrontModel = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.String,
+  size: Schema.Finite,
+  recommended: Schema.Boolean,
+  active: Schema.Boolean,
+  state: EnvironmentSpeechModelState,
+  downloaded: Schema.optionalKey(Schema.Finite),
+});
+export type EnvironmentVoiceFrontModel = typeof EnvironmentVoiceFrontModel.Type;
+
+export const EnvironmentVoiceFrontModels = Schema.Struct({
+  models: Schema.Array(EnvironmentVoiceFrontModel),
+});
+export type EnvironmentVoiceFrontModels = typeof EnvironmentVoiceFrontModels.Type;
+
 export const EnvironmentSpeechState = Schema.Literals(["missing-model", "ready", "transcribing"]);
 export type EnvironmentSpeechState = typeof EnvironmentSpeechState.Type;
 

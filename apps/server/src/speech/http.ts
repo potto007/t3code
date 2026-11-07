@@ -23,6 +23,7 @@ import {
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as SpeechService from "./SpeechService.ts";
+import * as FrontModel from "../voice/FrontModel.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
 const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
@@ -53,6 +54,16 @@ const mapSpeechError = <A, R>(effect: Effect.Effect<A, SpeechService.SpeechError
     }),
   );
 
+const mapFrontModelError = <A, R>(
+  effect: Effect.Effect<A, FrontModel.FrontModelError | FrontModel.FrontModelNotFoundError, R>,
+) =>
+  effect.pipe(
+    Effect.catchTags({
+      FrontModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+      FrontModelError: (error) => failEnvironmentInternal("internal_error", error),
+    }),
+  );
+
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "voice",
@@ -60,6 +71,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
     const speech = yield* SpeechService.SpeechService;
     const cloud = yield* CloudSpeech.CloudSpeech;
     const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
+    const frontModel = yield* FrontModel.FrontModel;
     const guard = Effect.fnUntraced(function* (
       endpoint: string,
       scope: AuthEnvironmentScope = AuthOrchestrationOperateScope,
@@ -162,6 +174,34 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.removeModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
           return yield* speech.removeModel(args.payload.modelId).pipe(mapSpeechError);
+        }),
+      )
+      .handle(
+        "frontModels",
+        Effect.fn("environment.voice.frontModels")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* frontModel.models.pipe(mapFrontModelError);
+        }),
+      )
+      .handle(
+        "downloadFrontModel",
+        Effect.fn("environment.voice.downloadFrontModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* frontModel.download(args.payload.modelId).pipe(mapFrontModelError);
+        }),
+      )
+      .handle(
+        "cancelFrontModelDownload",
+        Effect.fn("environment.voice.cancelFrontModelDownload")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* frontModel.cancelDownload(args.payload.modelId).pipe(mapFrontModelError);
+        }),
+      )
+      .handle(
+        "removeFrontModel",
+        Effect.fn("environment.voice.removeFrontModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* frontModel.remove(args.payload.modelId).pipe(mapFrontModelError);
         }),
       )
       .handle(
