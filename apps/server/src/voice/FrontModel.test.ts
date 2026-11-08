@@ -49,12 +49,18 @@ it.effect("loads a managed model once per call and unloads it after idling", () 
     `{"action":"delegate","speech":" On it. ","task":"Push the branch.","outward":true}`,
     `{"action":"none","speech":"mm-hm","task":"None.","outward":true}`,
     `{"action":"reply"`,
+    `{"action":"reply","speech":"Say \\"hi\\" \\u00e9. Done.","task":"","outward":false}`,
   ];
   const load = async (path: string): Promise<FrontLlama> => {
     loads.push(path);
     return {
       gpu: "cpu",
-      decide: async () => replies.shift()!,
+      // Streams in pieces small enough to split an escape.
+      decide: async (_messages, _signal, onChunk) => {
+        const reply = replies.shift()!;
+        for (let at = 0; at < reply.length; at += 3) onChunk?.(reply.slice(at, at + 3));
+        return reply;
+      },
       dispose: async () => void (disposed += 1),
     };
   };
@@ -72,6 +78,14 @@ it.effect("loads a managed model once per call and unloads it after idling", () 
         expect(yield* session.decide(messages)).toEqual({ action: "none", speech: "" });
         const error = yield* Effect.flip(session.decide(messages));
         expect(error.message).toContain("was not a decision");
+        const partials: unknown[] = [];
+        yield* session.decide(messages, (speech) => partials.push(speech));
+        expect(partials).toContainEqual({ action: "reply", speech: 'Say "hi', complete: false });
+        expect(partials.at(-1)).toEqual({
+          action: "reply",
+          speech: 'Say "hi" \u00e9. Done.',
+          complete: true,
+        });
       }),
     );
     yield* Effect.scoped(front.acquire);

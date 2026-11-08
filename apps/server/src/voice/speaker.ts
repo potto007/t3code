@@ -16,12 +16,17 @@ export type VoiceCallOutput =
   | VoiceConversationEvent
   | { readonly type: "audio"; readonly seq: number; readonly pcm: Float32Array };
 
-/** The first piece of an answer, rendered before the turn commits and not yet sent. */
+/** The first piece of an answer, rendered before it is spoken and not yet sent. */
 export type PreparedSpeech = {
-  readonly text: string;
   readonly piece: string;
   readonly pcm: Float32Array;
 };
+
+/** The piece `speak` would render first, once `markdown` can no longer change it. */
+export function firstPiece(markdown: string, complete: boolean) {
+  const pieces = splitSentences(speakableText(markdown));
+  return complete || pieces.length > 1 ? pieces[0] : undefined;
+}
 
 type Utterance = {
   readonly seq: number;
@@ -102,11 +107,8 @@ export const makeSpeaker = Effect.fn("VoiceSpeaker.make")(function* (input: {
     /** Speaking, in the contract's sense: queued, rendering, or not yet heard to the end. */
     busy: () =>
       live().some((utterance) => !utterance.rendered || utterance.played < utterance.sent),
-    /** Renders the first piece of an answer without sending anything. */
-    prepare: Effect.fn("VoiceSpeaker.prepare")(function* (markdown: string) {
-      const text = speakableText(markdown);
-      const piece = splitSentences(text)[0];
-      if (!piece) return undefined;
+    /** Renders the first piece of an answer (see `firstPiece`) without sending anything. */
+    prepare: Effect.fn("VoiceSpeaker.prepare")(function* (piece: string) {
       const chunks = yield* tts.synthesize(piece, input.voice).pipe(Stream.runCollect);
       const pcm = new Float32Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
       let offset = 0;
@@ -114,15 +116,17 @@ export const makeSpeaker = Effect.fn("VoiceSpeaker.make")(function* (input: {
         pcm.set(chunk, offset);
         offset += chunk.length;
       }
-      return { text, piece, pcm } satisfies PreparedSpeech;
+      return { piece, pcm } satisfies PreparedSpeech;
     }),
     /** Every spoken text passes here, so markdown is stripped once for all of them. */
     speak: Effect.fn("VoiceSpeaker.speak")(function* (markdown: string, prepared?: PreparedSpeech) {
       const text = speakableText(markdown);
       if (!text) return undefined;
-      const ready = prepared?.text === text ? prepared : undefined;
-      const rest = ready ? splitSentences(text).slice(1).join(" ") : text;
-      const pieces = splitSentences(rest);
+      const all = splitSentences(text);
+      const ready = prepared && prepared.piece === all[0] ? prepared : undefined;
+      const rest = ready ? all.slice(1).join(" ") : text;
+      // The pieces synthesis yields, one per chunk, so sentence ends line up with the audio.
+      const pieces = ready ? splitSentences(rest) : all;
       const utterance: Utterance = {
         seq: ++lastSeq,
         text,

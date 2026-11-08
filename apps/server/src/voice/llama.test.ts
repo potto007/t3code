@@ -12,9 +12,13 @@ const fixture = `data:text/javascript,${encodeURIComponent(`
   export const load = async ({ path, gpu, schema }) => ({
     // Forks made while loading must not inherit the worker's own entry.
     gpu: \`\${gpu === false ? "cpu" : "fake"} \${JSON.stringify(process.execArgv)}\`,
-    decide: (messages, signal) => {
+    decide: (messages, signal, onTextChunk) => {
       const last = messages.at(-1).content;
-      if (last !== "hang") return Promise.resolve(JSON.stringify({ path, last, keys: schema.required }));
+      if (last !== "hang") {
+        const text = JSON.stringify({ path, last, keys: schema.required });
+        for (let at = 0; at < text.length; at += 7) onTextChunk(text.slice(at, at + 7));
+        return Promise.resolve(text);
+      }
       return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
     },
   });
@@ -28,11 +32,20 @@ it("decides from an isolated process and keeps working after an interrupted deci
     expect(llama.gpu).toBe("fake []");
     const interrupted = new AbortController();
     const hung = llama.decide([{ role: "user", content: "hang" }], interrupted.signal);
-    const next = llama.decide([{ role: "user", content: "hi" }], new AbortController().signal);
+    const chunks: string[] = [];
+    const next = llama.decide(
+      [{ role: "user", content: "hi" }],
+      new AbortController().signal,
+      (chunk) => chunks.push(chunk),
+    );
     interrupted.abort(new Error("barge-in"));
     await expect(hung).rejects.toThrow("barge-in");
     // The queued decision only runs once the worker has dropped the interrupted one.
-    expect(JSON.parse(await next)).toEqual({
+    const text = await next;
+    // Generation streams in order, all of it before the decision resolves.
+    expect(chunks.join("")).toBe(text);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(JSON.parse(text)).toEqual({
       path: "/models/front.gguf",
       last: "hi",
       keys: ["action", "speech", "task", "outward"],

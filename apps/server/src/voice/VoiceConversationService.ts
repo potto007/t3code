@@ -42,7 +42,13 @@ import {
   noteText,
   type FrontInput,
 } from "./prompts.ts";
-import { makeSpeaker, type PreparedSpeech, type Speaker, type VoiceCallOutput } from "./speaker.ts";
+import {
+  firstPiece,
+  makeSpeaker,
+  type PreparedSpeech,
+  type Speaker,
+  type VoiceCallOutput,
+} from "./speaker.ts";
 import {
   IDLE_SPECULATION,
   stepSpeculation,
@@ -293,14 +299,15 @@ const make = Effect.gen(function* () {
     const act = Effect.fn("VoiceConversationService.act")(function* (
       decision: FrontModel.FrontDecision,
       inputs: readonly FrontInput[],
-      prepared?: PreparedSpeech,
+      rendering: Fiber.Fiber<PreparedSpeech | undefined>,
     ) {
       const speech = limitSpeech(decision.speech);
+      const prepared = Fiber.join(rendering);
       const said = inputs.flatMap((input) => (input.type === "user" ? [input.text] : [])).join(" ");
       // Only the user starts work: acting on a bare agent result would loop run after run.
       const steersNote = decision.action === "note" && runs.size > 0;
       if (!said || !(decision.action === "delegate" || steersNote)) {
-        if (speech) yield* speaker.speak(speech, prepared);
+        if (speech) yield* speaker.speak(speech, yield* prepared);
         if (said && decision.action === "note") yield* deliverNote(decision.task?.trim() || said);
         return;
       }
@@ -318,9 +325,11 @@ const make = Effect.gen(function* () {
       const outward =
         decision.outward === true || [said, task, ...taken].some((text) => isOutwardRequest(text));
       if (!outward) {
-        if (speech) yield* speaker.speak(speech, prepared);
+        if (speech) yield* speaker.speak(speech, yield* prepared);
         return yield* deliver;
       }
+      // The acknowledgement waits for a yes; nothing rendered for it is spoken now.
+      yield* Fiber.interrupt(rendering);
       const id = ++confirmations;
       // An answer prepared meanwhile assumed no question was pending.
       context++;
@@ -363,34 +372,46 @@ const make = Effect.gen(function* () {
     });
 
     /**
-     * Decides and acts on one turn. An early turn decides and renders its first piece, then
-     * waits for `commit`: nothing it does reaches the user or the thread before that.
+     * Decides and acts on one turn. The first piece of the speech renders as soon as the front
+     * has streamed it, while the rest of the decision generates; only `act` may speak it. An
+     * early turn decides and renders, then waits for `commit`: nothing it does reaches the
+     * user or the thread before that.
      */
     const respond = Effect.fn("VoiceConversationService.respond")(
       function* (inputs: readonly FrontInput[], commit: Deferred.Deferred<void> | undefined) {
-        const answer = yield* Effect.gen(function* () {
-          const decision = yield* front.decide(history.messages(inputs));
-          const speech = limitSpeech(decision.speech);
-          const prepared =
-            commit && speech
-              ? yield* speaker
-                  .prepare(speech)
-                  .pipe(
-                    Effect.catch((cause) =>
-                      Effect.logWarning("voice call could not render early", { cause }).pipe(
-                        Effect.as(undefined),
-                      ),
-                    ),
-                  )
-              : undefined;
-          return { decision, prepared };
-        }).pipe(Effect.exit);
+        const piece = yield* Deferred.make<string | undefined>();
+        const rendering = yield* Deferred.await(piece).pipe(
+          Effect.flatMap((text) => (text ? speaker.prepare(text) : Effect.undefined)),
+          Effect.catch((cause) =>
+            Effect.logWarning("voice call could not render early", { cause }).pipe(
+              Effect.as(undefined),
+            ),
+          ),
+          Effect.forkChild,
+        );
+        const answer = yield* front
+          .decide(history.messages(inputs), ({ action, speech, complete }) => {
+            const text = action === "none" ? undefined : firstPiece(speech, complete);
+            if (action === "none" || text) Deferred.doneUnsafe(piece, Effect.succeed(text));
+          })
+          .pipe(
+            // Without streaming, only an early turn renders ahead, from the whole decision.
+            Effect.tap((decision) =>
+              Deferred.succeed(
+                piece,
+                commit && decision.action !== "none"
+                  ? firstPiece(limitSpeech(decision.speech), true)
+                  : undefined,
+              ),
+            ),
+            Effect.exit,
+          );
         if (commit) yield* Deferred.await(commit);
-        const { decision, prepared } = yield* answer;
+        const decision = yield* answer;
         // Committed before acting, so a barge-in from here on no longer takes the turn back.
         history.commit(inputs, decision);
         thinking = undefined;
-        yield* act(decision, inputs, prepared);
+        yield* act(decision, inputs, rendering);
       },
       // The user hears that the turn failed rather than waiting on silence.
       Effect.catch((cause) =>

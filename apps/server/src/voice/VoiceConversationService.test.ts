@@ -16,6 +16,7 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -33,6 +34,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { splitSentences } from "../speech/sentences.ts";
 import * as SpeechService from "../speech/SpeechService.ts";
 import * as TextToSpeech from "../speech/TextToSpeech.ts";
+import type { PartialSpeech } from "./decision.ts";
 import * as FrontModel from "./FrontModel.ts";
 import type { VoiceCallOutput } from "./speaker.ts";
 import * as VoiceConversationService from "./VoiceConversationService.ts";
@@ -259,7 +261,10 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
         ),
     }),
   );
-  const decisions = yield* Queue.unbounded<Effect.Effect<FrontModel.FrontDecision>>();
+  const decisions =
+    yield* Queue.unbounded<
+      (onSpeech?: (speech: PartialSpeech) => void) => Effect.Effect<FrontModel.FrontDecision>
+    >();
   const asked: (readonly FrontModel.FrontMessage[])[] = [];
   const asking = yield* Queue.unbounded<void>();
   const front = Layer.succeed(
@@ -267,11 +272,11 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
     FrontModel.FrontModel.of({
       acquire: hold("front").pipe(
         Effect.as({
-          decide: (messages) =>
+          decide: (messages, onSpeech) =>
             Effect.sync(() => void asked.push(messages)).pipe(
               Effect.andThen(Queue.offer(asking, undefined)),
               Effect.andThen(Queue.take(decisions)),
-              Effect.flatten,
+              Effect.flatMap((next) => next(onSpeech)),
             ),
         }),
       ),
@@ -351,8 +356,26 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
     return { voice, until, say, pause, seen, rendered, fed: () => fed };
   });
   const decide = (decision: FrontModel.FrontDecision) =>
-    Queue.offer(decisions, Effect.succeed(decision));
-  return { layer, call, decide, decisions, asked, asking, synthesized, held, prompts };
+    Queue.offer(decisions, () => Effect.succeed(decision));
+  /** Streams the decision's speech at once, then holds the decision itself until `release`. */
+  const streamSpeech = (decision: FrontModel.FrontDecision, release: Deferred.Deferred<void>) =>
+    Queue.offer(decisions, (onSpeech) =>
+      Effect.sync(() =>
+        onSpeech?.({ action: decision.action, speech: decision.speech, complete: true }),
+      ).pipe(Effect.andThen(Deferred.await(release)), Effect.as(decision)),
+    );
+  return {
+    layer,
+    call,
+    decide,
+    streamSpeech,
+    decisions,
+    asked,
+    asking,
+    synthesized,
+    held,
+    prompts,
+  };
 });
 
 const isState = (state: string) => (output: VoiceCallOutput) =>
@@ -422,7 +445,7 @@ it.effect("drops an answer still being thought of once the user speaks again", (
     yield* Effect.gen(function* () {
       const { until, say, pause } = yield* test.call();
       yield* say("open the");
-      yield* Queue.offer(test.decisions, Effect.never);
+      yield* Queue.offer(test.decisions, () => Effect.never);
       yield* pause(3000);
       yield* Queue.take(test.asking);
       yield* say("open the readme");
@@ -641,6 +664,47 @@ it.effect("discards an answer prepared in a pause once the user goes on", () =>
       assert.deepStrictEqual(spoken(answered), ["Lint is clean."]);
       assert.isFalse(seen.some((output) => output.type === "delegated"));
       assert.isFalse(seen.some((output) => output.type === "audio" && output.seq !== 1));
+      assert.deepStrictEqual(test.prompts, []);
+    }).pipe(Effect.provide(test.layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("renders streamed speech before the decision ends, and never speaks a held request", () =>
+  Effect.gen(function* () {
+    const test = yield* harness("streamed", []);
+    yield* Effect.gen(function* () {
+      const { voice, until, say, pause, rendered, seen } = yield* test.call();
+      const answer = yield* Deferred.make<void>();
+      yield* say("what time is it");
+      yield* test.streamSpeech({ action: "reply", speech: "It is noon. Anything else?" }, answer);
+      yield* pause(1500);
+      // The first sentence renders while the decision is still held.
+      assert.strictEqual(yield* Queue.take(test.synthesized), "It is noon.");
+      yield* Deferred.succeed(answer, undefined);
+      const answered = yield* until((output) => output.type === "speak");
+      assert.deepStrictEqual(spoken(answered), ["It is noon. Anything else?"]);
+      // Speaking reuses that render and synthesizes only the rest.
+      assert.strictEqual(yield* Queue.take(test.synthesized), "Anything else?");
+      yield* rendered(1, 2);
+      yield* voice.played(1, 1_000_000);
+      yield* until(isState("listening"));
+
+      const request = yield* Deferred.make<void>();
+      yield* say("open a pull request");
+      yield* test.streamSpeech(
+        { action: "delegate", speech: "On it.", task: "Open a pull request.", outward: true },
+        request,
+      );
+      yield* pause(1500);
+      assert.strictEqual(yield* Queue.take(test.synthesized), "On it.");
+      yield* Deferred.succeed(request, undefined);
+      // The acknowledgement rendered early, but only the readback is spoken before a yes.
+      yield* until((output) => output.type === "speak" && output.text.startsWith("Send"));
+      assert.deepStrictEqual(
+        seen.filter((output) => output.type === "speak").map((output) => output.text),
+        ["It is noon. Anything else?", 'Send "Open a pull request" to the agent on Voice call?'],
+      );
+      assert.isFalse(seen.some((output) => output.type === "audio" && output.seq > 2));
       assert.deepStrictEqual(test.prompts, []);
     }).pipe(Effect.provide(test.layer));
   }).pipe(Effect.scoped),

@@ -60,13 +60,13 @@ const loaderEntry = `
           gpu: llama.gpu || "cpu",
           // The context sequence keeps its tokens, so a history that extends the last one only
           // evaluates the new messages.
-          decide: async (messages, signal) => {
+          decide: async (messages, signal, onTextChunk) => {
             const history = messages.map((message) => message.role === "assistant"
               ? { type: "model", response: [message.content] }
               : { type: message.role, text: message.content });
             history.push({ type: "model", response: [] });
             const result = await chat.generateResponse(history,
-              { grammar, signal, temperature: 0, maxTokens: 512 });
+              { grammar, signal, temperature: 0, maxTokens: 512, onTextChunk });
             return result.response;
           },
         };
@@ -108,8 +108,9 @@ process.on("message", async (message) => {
     running = running.then(async () => {
       try {
         if (controller.signal.aborted) throw new Error("Aborted.");
+        const onTextChunk = (text) => process.send({ type: "t3-front-chunk", id: message.id, text });
         reply({ id: message.id, ok: true,
-          text: await engine.decide(message.messages, controller.signal) });
+          text: await engine.decide(message.messages, controller.signal, onTextChunk) });
       } catch (error) {
         reply({ id: message.id, ok: false, error: failure(error) });
       } finally {
@@ -163,11 +164,13 @@ function startFrontWorker(signal: AbortSignal, options: WorkerOptions) {
   let stopped: Error | undefined;
   let nextId = 0;
   const pending = new Map<number, ReturnType<typeof Promise.withResolvers<Reply>>>();
+  const chunkListeners = new Map<number, (text: string) => void>();
   const exited = Promise.withResolvers<void>();
   const fail = (error: Error) => {
     stopped ??= error;
     for (const request of pending.values()) request.reject(error);
     pending.clear();
+    chunkListeners.clear();
   };
   child.on("error", (error) => {
     fail(error);
@@ -183,14 +186,20 @@ function startFrontWorker(signal: AbortSignal, options: WorkerOptions) {
       typeof message !== "object" ||
       message === null ||
       !("type" in message) ||
-      message.type !== "t3-front-reply" ||
       !("id" in message) ||
       typeof message.id !== "number"
     )
       return;
+    if (message.type === "t3-front-chunk") {
+      if ("text" in message && typeof message.text === "string")
+        chunkListeners.get(message.id)?.(message.text);
+      return;
+    }
+    if (message.type !== "t3-front-reply") return;
     const reply = message as Reply;
     const request = pending.get(reply.id);
     pending.delete(reply.id);
+    chunkListeners.delete(reply.id);
     if (reply.ok) request?.resolve(reply);
     else request?.reject(new Error(reply.error ?? "The front model failed."));
   });
@@ -199,11 +208,12 @@ function startFrontWorker(signal: AbortSignal, options: WorkerOptions) {
     child.kill("SIGKILL");
   }
   signal.addEventListener("abort", stop, { once: true });
-  const send = (message: object, requestSignal?: AbortSignal) => {
+  const send = (message: object, requestSignal?: AbortSignal, onChunk?: (text: string) => void) => {
     if (stopped) return Promise.reject(stopped);
     const id = nextId++;
     const request = Promise.withResolvers<Reply>();
     pending.set(id, request);
+    if (onChunk) chunkListeners.set(id, onChunk);
     child.send({ ...message, id }, (error) => {
       if (error && pending.delete(id)) request.reject(error);
     });
@@ -211,6 +221,7 @@ function startFrontWorker(signal: AbortSignal, options: WorkerOptions) {
     requestSignal?.addEventListener(
       "abort",
       () => {
+        chunkListeners.delete(id);
         if (!pending.delete(id)) return;
         request.reject(requestSignal.reason);
         if (!stopped) child.send({ kind: "abort", id });
@@ -270,10 +281,14 @@ export async function loadFrontLlama(
   }
   return {
     gpu: loaded.gpu ?? "cpu",
-    /** The model's raw JSON text for the conversation so far. */
-    decide: async (messages: readonly FrontMessage[], requestSignal: AbortSignal) => {
+    /** The model's raw JSON text for the conversation so far; `onChunk` streams it as it generates. */
+    decide: async (
+      messages: readonly FrontMessage[],
+      requestSignal: AbortSignal,
+      onChunk?: (text: string) => void,
+    ) => {
       requestSignal.throwIfAborted();
-      const reply = await send({ kind: "decide", messages }, requestSignal);
+      const reply = await send({ kind: "decide", messages }, requestSignal, onChunk);
       if (typeof reply.text !== "string") throw new Error("Invalid front model response.");
       return reply.text;
     },

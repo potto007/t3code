@@ -17,7 +17,7 @@ import type * as Scope from "effect/Scope";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechModelStore from "../speech/SpeechModelStore.ts";
-import { parseFrontDecision } from "./decision.ts";
+import { parseFrontDecision, parsePartialSpeech, type PartialSpeech } from "./decision.ts";
 import { FRONT_MODELS, type FrontModelEntry, getFrontModel } from "./frontModels.ts";
 import { type FrontLlama, loadFrontLlama } from "./llama.ts";
 import { makeOpenAiFrontSession } from "./openai.ts";
@@ -59,9 +59,13 @@ export class FrontModelNotFoundError extends Schema.TaggedError<FrontModelNotFou
 }
 
 export interface FrontModelSession {
-  /** Output forced through a JSON schema, so it always decodes. A shared message prefix reuses the KV cache. Interrupting the effect aborts generation. */
+  /**
+   * Output forced through a JSON schema, so it always decodes. A shared message prefix reuses the KV cache. Interrupting the effect aborts generation.
+   * `onSpeech` sees the speech grow while it generates, where the engine streams.
+   */
   readonly decide: (
     messages: readonly FrontMessage[],
+    onSpeech?: (speech: PartialSpeech) => void,
   ) => Effect.Effect<FrontDecision, FrontModelError>;
 }
 
@@ -184,9 +188,25 @@ export const make = Effect.fn("FrontModel.make")(function* (
       });
     const loaded = yield* RcMap.get(workers, model);
     const decide: FrontModelSession["decide"] = Effect.fn("FrontModel.decide")(
-      function* (messages) {
+      function* (messages, onSpeech) {
+        let streamed = "";
+        let spoken: PartialSpeech | undefined;
+        const onChunk = onSpeech
+          ? (chunk: string) => {
+              if (spoken?.complete) return;
+              streamed += chunk;
+              const speech = parsePartialSpeech(streamed);
+              if (
+                !speech ||
+                (speech.speech === spoken?.speech && speech.complete === spoken.complete)
+              )
+                return;
+              spoken = speech;
+              onSpeech(speech);
+            }
+          : undefined;
         const text = yield* Effect.tryPromise({
-          try: (signal) => loaded.decide(messages, signal),
+          try: (signal) => loaded.decide(messages, signal, onChunk),
           catch: (cause) => new FrontModelError({ operation: "decide", cause }),
         });
         const decision = parseFrontDecision(text);
