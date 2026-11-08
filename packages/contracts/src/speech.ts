@@ -190,6 +190,17 @@ export const EnvironmentVoiceFrontModels = Schema.Struct({
 });
 export type EnvironmentVoiceFrontModels = typeof EnvironmentVoiceFrontModels.Type;
 
+/** The speech synthesis model a voice call speaks with, downloaded to the environment. */
+export const EnvironmentVoiceTtsModel = Schema.Struct({
+  name: Schema.String,
+  size: Schema.Finite,
+  state: EnvironmentSpeechModelState,
+  downloaded: Schema.optionalKey(Schema.Finite),
+  /** Why the last download failed, until another download starts or the model is removed. */
+  error: Schema.optionalKey(Schema.String),
+});
+export type EnvironmentVoiceTtsModel = typeof EnvironmentVoiceTtsModel.Type;
+
 export const EnvironmentVoicePackVariant = Schema.Literals(["cpu", "vulkan", "cuda", "metal"]);
 export type EnvironmentVoicePackVariant = typeof EnvironmentVoicePackVariant.Type;
 

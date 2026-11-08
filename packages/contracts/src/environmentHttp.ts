@@ -61,6 +61,7 @@ import {
   EnvironmentSpeechModelUnloadTimeoutRequest,
   EnvironmentVoiceFrontModels,
   EnvironmentVoicePack,
+  EnvironmentVoiceTtsModel,
   EnvironmentVoicePackDownloadRequest,
   EnvironmentSpeechPostProcessingRequest,
   EnvironmentSpeechPostProcessingResult,
@@ -911,6 +912,34 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechModelRequest,
       success: EnvironmentVoiceFrontModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("ttsModel", "/api/voice/tts-model", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentVoiceTtsModel,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("downloadTtsModel", "/api/voice/tts-model/download", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentVoiceTtsModel,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelTtsModelDownload", "/api/voice/tts-model/cancel", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentVoiceTtsModel,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeTtsModel", "/api/voice/tts-model/remove", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentVoiceTtsModel,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
