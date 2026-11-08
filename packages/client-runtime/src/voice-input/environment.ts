@@ -387,3 +387,41 @@ export const removeEnvironmentVoicePack = (prepared: PreparedConnection) =>
     path: (urls) => urls.removeVoicePack(),
     run: ({ client, headers }) => client.removeVoicePack({ headers }),
   });
+
+export const getEnvironmentVoiceTtsModel = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.ttsModel(),
+    run: ({ client, headers }) => client.ttsModel({ headers }),
+  });
+
+/** Resolves once the model is installed; poll `getEnvironmentVoiceTtsModel` for progress meanwhile. */
+export const downloadEnvironmentVoiceTtsModel = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.downloadTtsModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.downloadTtsModel({ headers }),
+  });
+
+export const cancelEnvironmentVoiceTtsModelDownload = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.cancelTtsModelDownload(),
+    run: ({ client, headers }) => client.cancelTtsModelDownload({ headers }),
+  });
+
+export const removeEnvironmentVoiceTtsModel = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.removeTtsModel(),
+    run: ({ client, headers }) => client.removeTtsModel({ headers }),
+  });
