@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { expect, it } from "vite-plus/test";
 
-import { loadFrontLlama, probeFrontGpu } from "./llama.ts";
+import { frontWorkerEnv, loadFrontLlama, probeFrontGpu } from "./llama.ts";
 
 // Replies with the last message; "hang" generates until the worker aborts it.
 const fixture = `data:text/javascript,${encodeURIComponent(`
@@ -93,4 +93,13 @@ it("probes llama.cpp's GPU build from the voice pack", async () => {
   } finally {
     NodeFS.rmSync(packRoot, { recursive: true, force: true });
   }
+});
+
+it("puts the pack's libraries ahead of the PATH however Windows spells it", () => {
+  const env = frontWorkerEnv({ Path: "C:\\Windows", HOME: "h" }, "C:\\pack\\cuda");
+  expect(env).toEqual({
+    PATH: ["C:\\pack\\cuda", "C:\\Windows"].join(NodePath.delimiter),
+    HOME: "h",
+    ELECTRON_RUN_AS_NODE: "1",
+  });
 });

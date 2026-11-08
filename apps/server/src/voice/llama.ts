@@ -152,11 +152,20 @@ type WorkerOptions = {
   readonly moduleUrl?: string;
 };
 
+export function frontWorkerEnv(base: NodeJS.ProcessEnv, libraryPath?: string) {
+  const env: NodeJS.ProcessEnv = { ...base, ELECTRON_RUN_AS_NODE: "1" };
+  if (!libraryPath) return env;
+  // A copied Windows environment usually spells it "Path", and the copy reads case-sensitively.
+  const keys = Object.keys(env).filter((key) => key.toUpperCase() === "PATH");
+  const current = keys.map((key) => env[key]).find(Boolean);
+  for (const key of keys) delete env[key];
+  env.PATH = [libraryPath, current].filter(Boolean).join(NodePath.delimiter);
+  return env;
+}
+
 function startFrontWorker(signal: AbortSignal, options: WorkerOptions) {
   signal.throwIfAborted();
-  const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
-  if (options.libraryPath)
-    env.PATH = [options.libraryPath, env.PATH].filter(Boolean).join(NodePath.delimiter);
+  const env = frontWorkerEnv(process.env, options.libraryPath);
   const child = NodeChildProcess.spawn(process.execPath, frontWorkerArgs(), {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     env,
