@@ -112,6 +112,27 @@ const opening = [
   }),
 ];
 
+const fixtureCall = [
+  turn(user("Please tell me how many markdown files are in the docs folder"), {
+    action: "delegate",
+    speech: "On it.",
+    task: "Count the number of markdown files in the docs folder.",
+  }),
+  turn(result("second fixture turn complete"), {
+    action: "reply",
+    speech: "The second fixture turn is complete.",
+  }),
+  turn(user("Then read the README and summarize it in one sentence, do not change anything"), {
+    action: "delegate",
+    speech: "On it.",
+    task: "Read the README file and summarize it in one sentence without changing anything.",
+  }),
+  turn(result("first fixture turn complete"), {
+    action: "reply",
+    speech: "The first fixture turn is complete. Is there anything else?",
+  }),
+];
+
 const PR3 = "PR 3 front-model decision bench (feat/live-voice-front)";
 const decision = (
   id: string,
@@ -321,6 +342,21 @@ const CLAIMS: readonly Case[] = [
     ["reply"],
     /^(?:yes|yep|yeah)\b|\bit(?:'s| is) (?:up|open)\b/i,
   ),
+  {
+    id: "claim-push-remote",
+    source: "Polish thread live call: the confirm fixture got a spoken note and no confirmation",
+    history: [],
+    input: user("Push this branch to the remote."),
+    expect: ["delegate"],
+  },
+  {
+    id: "claim-push-remote-after-calls",
+    source: "Polish thread live call: the confirm fixture after two fixture turns",
+    history: fixtureCall,
+    input: user("Push this branch to the remote."),
+    expect: ["delegate"],
+  },
+  claim("claim-push-remote-bare", [], user("push this branch to the remote"), ["delegate"]),
   claim(
     "claim-readback-draft",
     busy,

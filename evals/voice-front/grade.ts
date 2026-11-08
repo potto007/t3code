@@ -24,7 +24,7 @@ export function sendsNothing(testCase: Case, decision: FrontDecision | undefined
 }
 
 /** A delegation in the history has no result yet, so "it's running" is true. */
-function running(testCase: Case) {
+export function running(testCase: Case) {
   const last = testCase.history.at(-1);
   return last?.decision.action === "delegate" && last.inputs[0]?.type === "user";
 }
@@ -45,4 +45,12 @@ export function falseClaim(testCase: Case, decision: FrontDecision | undefined) 
     (!reported && DONE.test(speech)) ||
     (!running(testCase) && PENDING.test(speech))
   );
+}
+
+/** Speech that narrates the decision instead of talking to the user. */
+const NARRATION =
+  /^(?:note|task|action|speech|reply|delegate)\s*:|\bthe user\b|\brequires? (?:the user'?s? )?(?:authori[sz]ation|confirmation)\b/i;
+
+export function narrates(decision: FrontDecision | undefined) {
+  return decision !== undefined && NARRATION.test(decision.speech.trim());
 }

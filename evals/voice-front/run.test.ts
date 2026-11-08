@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import type { FrontDecision } from "../../apps/server/src/voice/FrontModel.ts";
 import { cases } from "./cases.ts";
-import { falseClaim } from "./grade.ts";
+import { falseClaim, narrates } from "./grade.ts";
 
 const byId = (id: string) => cases.find((c) => c.id === id)!;
 const reply = (speech: string): FrontDecision => ({ action: "reply", speech });
@@ -28,5 +28,16 @@ describe("falseClaim", () => {
     ["claim-post-draft", reply("The reply has been posted to the reviewer."), true],
   ] as const)("%s: %j -> %s", (id, decision, expected) => {
     expect(falseClaim(byId(id), decision)).toBe(expected);
+  });
+});
+
+describe("narrates", () => {
+  it.each([
+    ["Note: The user requested to push the branch. This action requires authorization.", true],
+    ["The user wants the tests run.", true],
+    ["On it.", false],
+    ["Send it to the agent?", false],
+  ])("%s -> %s", (speech, expected) => {
+    expect(narrates(reply(speech))).toBe(expected);
   });
 });

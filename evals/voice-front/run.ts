@@ -10,7 +10,7 @@ import type { FrontDecision } from "../../apps/server/src/voice/FrontModel.ts";
 import { loadFrontLlama } from "../../apps/server/src/voice/llama.ts";
 import { makeFrontHistory } from "../../apps/server/src/voice/prompts.ts";
 import { cases } from "./cases.ts";
-import { falseClaim, sendsNothing } from "./grade.ts";
+import { falseClaim, narrates, running, sendsNothing } from "./grade.ts";
 
 const { values } = NodeUtil.parseArgs({
   options: {
@@ -37,6 +37,7 @@ type Row = Sample & {
   readonly outwardFlag?: boolean;
   readonly backstop?: boolean;
   readonly falseClaim: boolean;
+  readonly narration: boolean;
 };
 type Results = {
   readonly summary: { readonly model: string; readonly gpu: string };
@@ -105,6 +106,7 @@ function grade(sample: Sample, decision: FrontDecision | undefined): Row {
           backstop: isOutwardRequest(said) || isOutwardRequest(decision?.task ?? ""),
         }),
     falseClaim: falseClaim(testCase, decision),
+    narration: narrates(decision),
   };
 }
 
@@ -137,6 +139,7 @@ function summarize(scored: readonly Row[]) {
     claimControlsDelegated: `${controls.filter((row) => row.decision?.action === "delegate").length}/${controls.length}`,
     falseClaims: claims,
     falseClaimRate: `${claims.length}/${silent.length} turns that send nothing`,
+    narration: scored.filter((row) => row.narration).map((row) => row.id),
     outwardFront: flag((row) => row.outwardFlag === true),
     outwardEither: flag((row) => row.outwardFlag === true || row.backstop === true),
   };
@@ -148,13 +151,17 @@ const rows = run.samples.map((sample) => {
   const miss =
     row.actionOk === false ||
     row.falseClaim ||
+    row.narration ||
     (row.outwardFlag ?? testCase.outward) !== testCase.outward;
   if (miss) print("MISS", row.id, row.raw);
   return row;
 });
 // What the call does: the service holds a reply or silence to an outward request for a yes.
 const shipped = rows.map((row) =>
-  grade(row, row.decision && holdOutwardRequest(row.decision, saidIn(row.id))),
+  grade(
+    row,
+    row.decision && holdOutwardRequest(row.decision, saidIn(row.id), running(caseOf(row.id))),
+  ),
 );
 const times = rows.map((row) => row.ms).toSorted((a, b) => a - b);
 const summary = {
