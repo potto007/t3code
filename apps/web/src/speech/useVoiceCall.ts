@@ -5,7 +5,12 @@ import {
   getEnvironmentVoicePack,
   getEnvironmentVoiceTtsModel,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ProjectId,
+  type ThreadId,
+  VOICE_CALL_PAUSE_MS,
+} from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
 import { useNavigate } from "@tanstack/react-router";
@@ -199,6 +204,7 @@ export function useVoiceCall(input: {
         },
         voice: settings.voiceTtsVoice,
         idleTimeout: settings.voiceCallIdleTimeout,
+        endSilenceMs: VOICE_CALL_PAUSE_MS[settings.voiceCallPause],
         source: "web",
       },
     });

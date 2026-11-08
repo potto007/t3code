@@ -144,6 +144,9 @@ can talk over it to interrupt. The call strip shows what it heard and said, with
 - Use headphones if you can. Echo cancellation keeps the voice out of your
   microphone on most speakers, but loud speakers or a laptop on a desk can still
   let it hear itself.
+- The voice answers once you pause. If it answers before you finish a thought,
+  set **Pause before answering** in **Settings → Voice → Conversation** to
+  **Long**; **Short** answers sooner.
 - While a call runs, dictation on that environment waits: both use the same
   speech model.
 - The call hangs up after a quiet stretch (10 minutes by default), when you close

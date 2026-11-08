@@ -17,12 +17,21 @@ export type VoiceIdleTimeout = typeof VoiceIdleTimeout.Type;
 
 const TurnPauseMs = Schema.Int.check(Schema.isBetween({ minimum: 300, maximum: 10_000 }));
 
+/** How long a pause ends a turn: a client setting, sent as `endSilenceMs`. */
+export const VoiceCallPause = Schema.Literals(["short", "normal", "long"]);
+export type VoiceCallPause = typeof VoiceCallPause.Type;
+export const VOICE_CALL_PAUSE_MS: Record<VoiceCallPause, number> = {
+  short: 1000,
+  normal: 1200,
+  long: 1500,
+};
+
 export const VoiceConversationOptions = Schema.Struct({
   transcription: SpeechTranscriptionOptions,
   voice: Schema.optionalKey(VoiceTtsVoice),
   /** Default `min_10`. */
   idleTimeout: Schema.optionalKey(VoiceIdleTimeout),
-  /** Pause that ends a turn. Server default 1500 ms. */
+  /** Pause that ends a turn. Server default 1200 ms. */
   endSilenceMs: Schema.optionalKey(TurnPauseMs),
   /** Pause that ends a turn whose text reads as unfinished. Server default 3000 ms. */
   endSilenceLongMs: Schema.optionalKey(TurnPauseMs),

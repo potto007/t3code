@@ -52,7 +52,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
-import { VoiceIdleTimeout, VoiceTtsVoice } from "./voiceConversation.ts";
+import { VoiceCallPause, VoiceIdleTimeout, VoiceTtsVoice } from "./voiceConversation.ts";
 import {
   CloudSpeechModelId,
   SpeechAcceleration,
@@ -573,6 +573,7 @@ export const ClientSettingsSchema = Schema.Struct({
   voiceShortcutMode: VoiceShortcutMode.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   voiceTtsVoice: VoiceTtsVoice.pipe(Schema.withDecodingDefault(Effect.succeed("af_heart"))),
   voiceCallIdleTimeout: VoiceIdleTimeout.pipe(Schema.withDecodingDefault(Effect.succeed("min_10"))),
+  voiceCallPause: VoiceCallPause.pipe(Schema.withDecodingDefault(Effect.succeed("normal"))),
   speechLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechTranslateToEnglish: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -1956,6 +1957,7 @@ export const ClientSettingsPatch = Schema.Struct({
   voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),
   voiceTtsVoice: Schema.optionalKey(VoiceTtsVoice),
   voiceCallIdleTimeout: Schema.optionalKey(VoiceIdleTimeout),
+  voiceCallPause: Schema.optionalKey(VoiceCallPause),
   speechLanguage: Schema.optionalKey(SpeechLanguage),
   speechTranslateToEnglish: Schema.optionalKey(Schema.Boolean),
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),

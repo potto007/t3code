@@ -20,6 +20,7 @@ import {
   type EnvironmentVoicePack,
   type EnvironmentVoiceTtsModel,
   VOICE_TTS_VOICES,
+  type VoiceCallPause,
   VoiceFrontModel,
   type VoiceIdleTimeout,
 } from "@t3tools/contracts";
@@ -53,6 +54,12 @@ const IDLE_LABELS: Record<VoiceIdleTimeout, string> = {
   min_10: "After 10 minutes",
   min_30: "After 30 minutes",
   never: "Never",
+};
+
+const PAUSE_LABELS: Record<VoiceCallPause, string> = {
+  short: "Short (1 second)",
+  normal: "Normal (1.2 seconds)",
+  long: "Long (1.5 seconds)",
 };
 
 const isFrontModel = Schema.is(VoiceFrontModel);
@@ -573,6 +580,38 @@ export function VoiceConversationSettings() {
               {(Object.keys(IDLE_LABELS) as VoiceIdleTimeout[]).map((timeout) => (
                 <SelectItem key={timeout} value={timeout}>
                   {IDLE_LABELS[timeout]}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("voice-call-pause")}
+        title="Pause before answering"
+        description="How long you pause before the voice answers. Longer pauses cut you off less; shorter ones answer sooner."
+        resetAction={
+          settings.voiceCallPause !== "normal" ? (
+            <SettingResetButton
+              label="pause before answering"
+              onClick={() => void updateClientSettings({ voiceCallPause: "normal" })}
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={settings.voiceCallPause}
+            onValueChange={(value) => {
+              if (value) void updateClientSettings({ voiceCallPause: value as VoiceCallPause });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Pause before answering" className="max-w-64">
+              <SelectValue>{PAUSE_LABELS[settings.voiceCallPause]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {(Object.keys(PAUSE_LABELS) as VoiceCallPause[]).map((pause) => (
+                <SelectItem key={pause} value={pause}>
+                  {PAUSE_LABELS[pause]}
                 </SelectItem>
               ))}
             </SelectPopup>

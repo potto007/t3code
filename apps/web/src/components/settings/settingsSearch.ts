@@ -577,6 +577,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["voice call conversation idle timeout silence end"],
   },
   {
+    id: "voice-call-pause",
+    title: "Pause before answering",
+    to: "/settings/voice",
+    searchTerms: ["voice call conversation pause turn end silence wait latency interrupt"],
+  },
+  {
     id: "speech-correction-word",
     title: "Correction cue",
     to: "/settings/voice",
