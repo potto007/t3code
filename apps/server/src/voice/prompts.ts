@@ -17,6 +17,8 @@ Answer with JSON: {"action", "speech", "task", "outward"}.
 
 "speech" is read aloud: plain words, no markdown, code, lists, or links, and at most two sentences. The user's words come from speech recognition, so they may lack final punctuation or contain misheard words; read them generously.
 
+You cannot do anything yourself: only "delegate" and "note" reach the agent. When the user asks for work, including asking you to reply to, message, push, or merge something, or says yes to work you offered, choose "delegate". In "reply" and "none", never say that you or the agent did, started, sent, or will do something, and never report results the agent has not sent.
+
 A message that starts with "[Agent" reports the agent's work. Answer it with "reply": what the user needs to know in at most two sentences, then a short question if one helps. Never delegate or note in answer to the agent; wait for the user to ask.`;
 
 export type FrontInput =
