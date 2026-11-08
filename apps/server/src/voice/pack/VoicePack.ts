@@ -90,6 +90,8 @@ const encodeMarker = Schema.encodeEffect(MarkerJson);
 const PACK_PACKAGE_JSON = `{"name":"t3-voice-pack","private":true}\n`;
 
 const MARKER = ".installed.json";
+// Probe workers report a stack; markers written before that was trimmed still carry one.
+const probeMessage = (message: string) => message.split("\n")[0]!.replace(/^Error: /, "");
 const CURRENT = "current";
 const DOWNLOAD_CONCURRENCY = 4;
 
@@ -162,6 +164,9 @@ export const make = Effect.fn("VoicePack.make")(function* (options: VoicePackOpt
   const readMarker = (id: string) =>
     fs.readFileString(path.join(base, id, MARKER)).pipe(
       Effect.map((text) => Option.getOrUndefined(decodeMarker(text))),
+      Effect.map((marker) =>
+        marker?.gpuError ? { ...marker, gpuError: probeMessage(marker.gpuError) } : marker,
+      ),
       Effect.orElseSucceed(() => undefined),
     );
   /** The installed pack, if it was built from this app's manifest. */
@@ -279,10 +284,7 @@ export const make = Effect.fn("VoicePack.make")(function* (options: VoicePackOpt
         // A GPU build that fails here would fail every call; record it and run on the CPU.
         const ran = yield* Effect.tryPromise({
           try: (signal) => probe(staging, plan.variant, signal, libraryPath(staging, plan.variant)),
-          catch: (cause) =>
-            (cause instanceof Error ? cause.message : String(cause))
-              .split("\n")[0]!
-              .replace(/^Error: /, ""),
+          catch: (cause) => probeMessage(cause instanceof Error ? cause.message : String(cause)),
         }).pipe(
           Effect.match({
             onSuccess: (gpu) => (gpu === plan.variant ? undefined : `The build ran on ${gpu}.`),

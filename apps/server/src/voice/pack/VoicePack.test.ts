@@ -189,6 +189,14 @@ it.layer(services)("VoicePack", (it) => {
         gpuError: "libcudart.so.13: cannot open shared object file",
       });
       expect((yield* Effect.scoped(pack.use)).gpu).toBe(false);
+      // Markers written before probes were trimmed still hold the stack.
+      const fs = yield* FileSystem.FileSystem;
+      const { base, names } = yield* packDirectories;
+      const marker = `${base}/${names[0]}/.installed.json`;
+      const stale = JSON.parse(yield* fs.readFileString(marker));
+      stale.gpuError = "Error: libcudart.so.13: cannot open\n    at probe (file:///[eval1]:25:19)";
+      yield* fs.writeFileString(marker, JSON.stringify(stale));
+      expect((yield* pack.status).gpuError).toBe("libcudart.so.13: cannot open");
       yield* pack.remove;
     }),
   );
