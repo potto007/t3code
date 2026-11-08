@@ -17,6 +17,7 @@ import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
   usePrimarySettingsAvailable,
 } from "../../hooks/useSettings";
+import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
@@ -75,6 +76,31 @@ function SettingsSearchTargetProvider({
 }
 
 let pendingTargetScroll: AbortController | undefined;
+let followingTarget: AbortController | undefined;
+
+// Rows above the target can load after the scroll starts, and scroll anchoring does not
+// correct a smooth scroll in flight, so re-center until the user takes over the page.
+function followTargetThroughLayoutShifts(target: HTMLElement, scroll: () => void): void {
+  followingTarget?.abort();
+  const page = target.closest<HTMLElement>("[data-settings-page-scroll]");
+  const content = page?.firstElementChild;
+  if (!page || !content) return;
+  const controller = new AbortController();
+  followingTarget = controller;
+  const { signal } = controller;
+  const stop = () => controller.abort();
+  let first = true;
+  const unobserve = observeResize(content, () => {
+    if (first) return void (first = false);
+    if (target.isConnected) scroll();
+    else stop();
+  });
+  signal.addEventListener("abort", unobserve, { once: true });
+  for (const type of ["wheel", "touchstart", "pointerdown", "keydown"] as const) {
+    page.addEventListener(type, stop, { once: true, passive: true, signal });
+  }
+  target.addEventListener("blur", stop, { once: true, signal });
+}
 
 function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): void {
   pendingTargetScroll?.abort();
@@ -95,6 +121,7 @@ function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): vo
       block: "center",
     });
   scroll();
+  followTargetThroughLayoutShifts(target, scroll);
   const panel = target.parentElement?.closest<HTMLElement>(
     '[data-slot="collapsible-panel"][data-open]',
   );
