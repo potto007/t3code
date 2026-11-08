@@ -45,11 +45,16 @@ it("loads kokoro-js and its transformers.js from the voice pack, never the hub",
   };
   write("package.json", `{"name":"t3-voice-pack","private":true}`);
   write("node_modules/kokoro-js/package.json", `{"name":"kokoro-js","main":"dist/kokoro.cjs"}`);
+  // Windows' CommonJS loader rejects a file URL without a drive, so the sharp stub must resolve
+  // to a real absolute path; inside the pack is one on every platform.
   write(
     "node_modules/kokoro-js/dist/kokoro.cjs",
     `const { env } = require("@huggingface/transformers");
+    const stubbed = require.resolve("sharp").startsWith(${JSON.stringify(packRoot)}) &&
+      (() => { try { require("sharp")(); } catch (error) { return error.message === "Images are unavailable."; } })();
     exports.KokoroTTS = { from_pretrained: async () => ({ generate: async (text) => ({
-      audio: Float32Array.of(env.allowRemoteModels ? -1 : text.length), sampling_rate: 24000 }) }) };`,
+      audio: Float32Array.of(env.allowRemoteModels ? -1 : stubbed ? text.length : -2),
+      sampling_rate: 24000 }) }) };`,
   );
   write(
     "node_modules/@huggingface/transformers/package.json",

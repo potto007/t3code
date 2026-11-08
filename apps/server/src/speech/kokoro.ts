@@ -43,7 +43,8 @@ const loaderEntry = `
     if (moduleUrl) return await import(moduleUrl);
     const packagePath = findPackageJSON("kokoro-js", pathToFileURL(join(packRoot, "package.json")));
     if (!packagePath) throw new Error("The voice pack has no speech synthesis package.");
-    const sharpStub = "file:///t3-speech-worker/sharp-stub.cjs";
+    // A real absolute path: Windows' CommonJS loader rejects a file URL without a drive.
+    const sharpStub = pathToFileURL(join(dirname(packagePath), "t3-sharp-stub.cjs")).href;
     registerHooks({
       resolve: (specifier, context, next) => specifier === "sharp"
         ? { url: sharpStub, format: "commonjs", shortCircuit: true } : next(specifier, context),
