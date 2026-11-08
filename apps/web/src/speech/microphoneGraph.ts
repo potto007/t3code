@@ -13,6 +13,8 @@ export async function openMicrophoneGraph(input: {
   readonly signal: AbortSignal;
   /** Calls run past dictation's five-minute cap. */
   readonly unlimited?: boolean;
+  /** 16 kHz samples per PCM message; dictation's default is half a second. */
+  readonly chunkSamples?: number;
   readonly onMessage: (data: MicrophoneMessage) => void;
   readonly onProcessorError: (message: string) => void;
   readonly onDisconnected: (message: string) => void;
@@ -58,7 +60,10 @@ export async function openMicrophoneGraph(input: {
     signal.throwIfAborted();
     node = new AudioWorkletNode(context, "t3-pcm-capture", {
       channelCount: 1,
-      ...(input.unlimited ? { processorOptions: { unlimited: true } } : {}),
+      processorOptions: {
+        ...(input.unlimited ? { unlimited: true } : {}),
+        ...(input.chunkSamples ? { chunkSamples: input.chunkSamples } : {}),
+      },
     });
     node.port.onmessage = ({ data }: MessageEvent<MicrophoneMessage>) => {
       if (!signal.aborted) input.onMessage(data);

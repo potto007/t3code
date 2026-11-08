@@ -14,6 +14,9 @@ export function createBrowserVoiceCallPlatform(input: {
         microphoneId: input.microphoneId,
         voiceProcessing: true,
         unlimited: true,
+        // A pause ends a turn only once the chunk that hears it arrives; 250 ms ends turns sooner
+        // and the recognizer still decodes each chunk well inside its length.
+        chunkSamples: 4_000,
         signal,
         onMessage: (data) => {
           if (data instanceof Float32Array) onPcm(data);
