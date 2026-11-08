@@ -1,3 +1,4 @@
+import type { FrontDecision } from "./FrontModel.ts";
 import { words } from "./turnTaking.ts";
 
 const SAMPLES_PER_MS = 16;
@@ -64,6 +65,16 @@ export function isOutwardRequest(text: string) {
   return text
     .split(/[.;:!?,\n]|\b(?:and|then|also|but)\b/i)
     .some((clause) => clauseIsOutward(clause));
+}
+
+/**
+ * A reply or silence to words that ask for outward work leaves the user believing it was sent,
+ * or drops it. Held as a delegation instead, it waits for a spoken yes like any outward request.
+ */
+export function holdOutwardRequest(decision: FrontDecision, said: string): FrontDecision {
+  if (decision.action === "delegate" || decision.action === "note" || !isOutwardRequest(said))
+    return decision;
+  return { action: "delegate", speech: "", task: said, outward: true };
 }
 
 type AnswerKind = "yes" | "no" | "listening" | "filler";

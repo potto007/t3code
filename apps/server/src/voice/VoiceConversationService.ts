@@ -27,6 +27,7 @@ import {
 import {
   cancelSpeech,
   confirmationReadback,
+  holdOutwardRequest,
   isOutwardRequest,
   startConfirmation,
   stepConfirmation,
@@ -58,6 +59,9 @@ import {
 import { classifyInterruption, ECHO_WINDOW_SAMPLES, heardOnlyEcho } from "./turnTaking.ts";
 
 export type { VoiceCallOutput } from "./speaker.ts";
+
+const userWords = (inputs: readonly FrontInput[]) =>
+  inputs.flatMap((input) => (input.type === "user" ? [input.text] : [])).join(" ");
 
 const IDLE_MINUTES = { min_5: 5, min_10: 10, min_30: 30, never: Infinity } as const;
 /** A delegated run is checked on this often, so a long one never holds a single wait forever. */
@@ -303,7 +307,7 @@ const make = Effect.gen(function* () {
     ) {
       const speech = limitSpeech(decision.speech);
       const prepared = Fiber.join(rendering);
-      const said = inputs.flatMap((input) => (input.type === "user" ? [input.text] : [])).join(" ");
+      const said = userWords(inputs);
       // Only the user starts work: acting on a bare agent result would loop run after run.
       const steersNote = decision.action === "note" && runs.size > 0;
       if (!said || !(decision.action === "delegate" || steersNote)) {
@@ -407,7 +411,7 @@ const make = Effect.gen(function* () {
             Effect.exit,
           );
         if (commit) yield* Deferred.await(commit);
-        const decision = yield* answer;
+        const decision = holdOutwardRequest(yield* answer, userWords(inputs));
         // Committed before acting, so a barge-in from here on no longer takes the turn back.
         history.commit(inputs, decision);
         thinking = undefined;

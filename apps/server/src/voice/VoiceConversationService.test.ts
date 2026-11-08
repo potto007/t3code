@@ -589,25 +589,33 @@ it.effect("sends an outward request only after a spoken yes", () =>
         yield* voice.played(speak.seq, 1_000_000);
         return taken;
       });
-      const ask = Effect.fn("test.voiceCall.ask")(function* () {
-        yield* say("open a pull request");
-        yield* test.decide({
+      const ask = Effect.fn("test.voiceCall.ask")(function* (
+        decision: FrontModel.FrontDecision = {
           action: "delegate",
           speech: "On it.",
           task: "Open a pull request.",
           outward: true,
-        });
+        },
+        task = "Open a pull request",
+      ) {
+        yield* say("open a pull request");
+        yield* test.decide(decision);
         yield* pause(1500);
         const asked = yield* hear("Send");
+        const readback = `Send "${task}" to the agent on Voice call?`;
         assert.deepStrictEqual(
           asked.filter((output) => output.type === "confirm").map((output) => output.text),
-          ['Send "Open a pull request" to the agent on Voice call?'],
+          [readback],
         );
-        assert.isFalse(asked.some((output) => output.type === "speak" && output.text === "On it."));
+        assert.deepStrictEqual(spoken(asked), [readback]);
         yield* until(isState("confirming"));
       });
 
-      yield* ask();
+      // A reply claiming the work is held like a delegation, not spoken.
+      yield* ask(
+        { action: "reply", speech: "I've opened the pull request." },
+        "open a pull request",
+      );
       yield* say("no");
       yield* pause(1500);
       const declined = yield* until((output) => output.type === "confirmed");
