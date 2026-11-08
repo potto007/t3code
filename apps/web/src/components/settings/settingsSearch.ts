@@ -564,6 +564,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["voice call conversation runtime pack download cuda gpu espeak onnx llama"],
   },
   {
+    id: "voice-call-tts-model",
+    title: "Voice model",
+    to: "/settings/voice",
+    scope: "environment",
+    searchTerms: ["voice call speech synthesis tts kokoro model download speak"],
+  },
+  {
     id: "voice-call-idle-timeout",
     title: "Hang up when quiet",
     to: "/settings/voice",

@@ -2,18 +2,23 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   cancelEnvironmentVoiceFrontModelDownload,
   cancelEnvironmentVoicePackDownload,
+  cancelEnvironmentVoiceTtsModelDownload,
   downloadEnvironmentVoiceFrontModel,
   downloadEnvironmentVoicePack,
+  downloadEnvironmentVoiceTtsModel,
   getEnvironmentVoiceFrontModels,
   getEnvironmentVoicePack,
+  getEnvironmentVoiceTtsModel,
   removeEnvironmentVoiceFrontModel,
   removeEnvironmentVoicePack,
+  removeEnvironmentVoiceTtsModel,
 } from "@t3tools/client-runtime/voice-input";
 import {
   AuthSettingsWriteScope,
   DEFAULT_VOICE_FRONT_MODEL,
   type EnvironmentVoiceFrontModels,
   type EnvironmentVoicePack,
+  type EnvironmentVoiceTtsModel,
   VOICE_TTS_VOICES,
   VoiceFrontModel,
   type VoiceIdleTimeout,
@@ -331,6 +336,84 @@ function VoicePackRow() {
   );
 }
 
+const loadTtsModel = (prepared: PreparedConnection) =>
+  runEnvironmentSpeech(getEnvironmentVoiceTtsModel(prepared));
+const isTtsModelDownloading = (model: EnvironmentVoiceTtsModel) =>
+  model.state === "downloading" || model.state === "verifying";
+
+function TtsModelDetails(props: { readonly prepared: PreparedConnection }) {
+  const { prepared } = props;
+  const tts = useEnvironmentDownloads(prepared, loadTtsModel, isTtsModelDownloading);
+  if (tts.data === null) return null;
+  const status = tts.data;
+  const model = {
+    name: status.name,
+    size: status.size,
+    ...(status.downloaded === undefined ? {} : { downloaded: status.downloaded }),
+    state:
+      tts.requestedDownload !== null && status.state === "downloadable"
+        ? ("downloading" as const)
+        : status.state,
+    active: status.state === "installed",
+  };
+  return (
+    <div className="flex w-full flex-wrap items-start gap-3 rounded-lg border border-border/60 px-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-sm font-medium leading-5">{status.name}</span>
+          <Badge variant="outline">{formatModelSize(status.size)}</Badge>
+        </div>
+        {status.error !== undefined && model.state === "downloadable" ? (
+          <p className="mt-0.5 text-xs leading-relaxed text-warning-foreground">
+            The last download failed: {status.error}
+          </p>
+        ) : null}
+        <ModelDownloadProgress model={model} />
+      </div>
+      <ModelActions
+        model={model}
+        installedLabel="Installed"
+        busy={tts.busy}
+        canCancel={tts.canManage}
+        onDownload={() =>
+          void tts.run(
+            "Could not download the voice model",
+            () => runEnvironmentSpeech(downloadEnvironmentVoiceTtsModel(prepared)),
+            "tts",
+          )
+        }
+        onSelect={() => undefined}
+        onCancel={() =>
+          void tts.run("Could not cancel the download", () =>
+            runEnvironmentSpeech(cancelEnvironmentVoiceTtsModelDownload(prepared)),
+          )
+        }
+        onDelete={() =>
+          void tts.run("Could not delete the voice model", () =>
+            runEnvironmentSpeech(removeEnvironmentVoiceTtsModel(prepared)),
+          )
+        }
+      />
+    </div>
+  );
+}
+
+/** The voice renders on the thread's environment, so its model downloads there. */
+function TtsModelRow() {
+  const { environment } = useSettingsScope();
+  const prepared = Option.getOrNull(usePreparedConnection(environment?.environmentId ?? null));
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("voice-call-tts-model")}
+      title="Voice model"
+      description={`The speech model a voice call talks with, downloaded to ${environment?.label ?? "this environment"}.`}
+    >
+      <div className="pb-3.5">{prepared ? <TtsModelDetails prepared={prepared} /> : null}</div>
+    </SettingsRow>
+  );
+}
+
 /** The front model answers on the thread's environment, so it is an environment setting there. */
 function FrontModelRow() {
   const { environment } = useSettingsScope();
@@ -469,6 +552,7 @@ export function VoiceConversationSettings() {
         }
       />
       {settingsScope !== null ? <VoicePackRow /> : null}
+      {settingsScope !== null ? <TtsModelRow /> : null}
       {settingsScope !== null ? <FrontModelRow /> : null}
       <SettingsRow
         {...searchableSetting("voice-call-idle-timeout")}

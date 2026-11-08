@@ -3,6 +3,7 @@ import {
   getEnvironmentSpeechStatus,
   getEnvironmentVoiceFrontModels,
   getEnvironmentVoicePack,
+  getEnvironmentVoiceTtsModel,
 } from "@t3tools/client-runtime/voice-input";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -95,7 +96,7 @@ export function useVoiceCall(input: {
     }
     const canSend = bindAudioGrant(destination.grantId);
     setStarting(true);
-    const [status, frontModels, pack] = await Promise.all([
+    const [status, frontModels, pack, ttsModel] = await Promise.all([
       runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared)).catch((error: unknown) => {
         toastManager.add({
           type: "error",
@@ -108,6 +109,8 @@ export function useVoiceCall(input: {
       runEnvironmentSpeech(getEnvironmentVoiceFrontModels(prepared)).catch(() => null),
       // An older environment has no pack endpoint and runs the runtime it bundles.
       runEnvironmentSpeech(getEnvironmentVoicePack(prepared)).catch(() => null),
+      // An older environment downloads the voice model on the call's first sentence.
+      runEnvironmentSpeech(getEnvironmentVoiceTtsModel(prepared)).catch(() => null),
     ]);
     setStarting(false);
     if (!status) return;
@@ -140,6 +143,24 @@ export function useVoiceCall(input: {
         to: "/settings/voice",
         search: { machine: environmentId },
         hash: "voice-call-pack",
+      });
+      return;
+    }
+    if (ttsModel && ttsModel.state !== "installed") {
+      const downloading = ttsModel.state !== "downloadable";
+      toastManager.add({
+        type: "info",
+        title: downloading
+          ? "The voice model is still downloading"
+          : "Download the voice model first",
+        description: downloading
+          ? `${ttsModel.name} is ${Math.round(((ttsModel.downloaded ?? 0) / ttsModel.size) * 100)}% downloaded. Settings shows its progress.`
+          : `${ttsModel.name} speaks during a voice call.`,
+      });
+      await navigate({
+        to: "/settings/voice",
+        search: { machine: environmentId },
+        hash: "voice-call-tts-model",
       });
       return;
     }
