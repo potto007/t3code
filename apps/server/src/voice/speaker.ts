@@ -167,7 +167,7 @@ export const makeSpeaker = Effect.fn("VoiceSpeaker.make")(function* (input: {
           type: "caption",
           who: "voice",
           committed: split.played,
-          tentative: split.rest,
+          tentative: split.played && split.rest ? ` ${split.rest}` : split.rest,
         });
       }
       prune();

@@ -408,7 +408,8 @@ it.effect("answers a finished utterance and stays speaking until playback is hea
         type: "caption",
         who: "voice",
         committed: "It is noon.",
-        tentative: "Lunch?",
+        // Clients render committed and tentative back to back.
+        tentative: " Lunch?",
       });
       yield* voice.played(1, 4000);
       yield* until(isState("listening"));
