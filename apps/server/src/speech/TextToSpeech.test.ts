@@ -166,10 +166,13 @@ it.effect("shows why a download failed until a retry, which a call can also make
   const files = fileStore((file) =>
     file.filename === "onnx/model.onnx" && ++attempts === 1
       ? Effect.fail(
-          PlatformError.badArgument({
-            module: "test",
-            method: "download",
-            description: "Speech model download failed: status 503.",
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "FileSystem",
+            method: "rename",
+            syscall: "rename",
+            pathOrDescriptor:
+              "/home/u/.t3/speech/models/model.onnx.0b8f2c4e-1d2a-4c3b-8e9f-123456789abc.part",
           }),
         )
       : Effect.void,
@@ -180,7 +183,7 @@ it.effect("shows why a download failed until a retry, which a call can also make
     expect(error.operation).toBe("download");
     expect(yield* tts.model).toMatchObject({
       state: "downloadable",
-      error: expect.stringContaining("status 503"),
+      error: "Could not save the model. Check free disk space, then try again.",
     });
     yield* Effect.scoped(tts.hold);
     expect(yield* tts.model).toEqual({

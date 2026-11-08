@@ -7,6 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as RcRef from "effect/RcRef";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -65,10 +66,17 @@ const KOKORO_SIZE = KOKORO_MODEL_FILES.reduce((total, file) => total + file.size
 
 const isTextToSpeechError = Schema.is(TextToSpeechError);
 
+// Store errors carry temp paths and URLs; Settings gets a reason and the log keeps the detail.
 const describe = (cause: Cause.Cause<TextToSpeechError>) => {
   const error = Cause.squash(cause);
   const inner = isTextToSpeechError(error) ? error.cause : error;
-  return inner instanceof Error ? inner.message : String(inner);
+  const tag = Predicate.hasProperty(inner, "_tag") ? inner._tag : undefined;
+  if (tag === "SpeechModelDownloadError" && inner instanceof Error) return inner.message;
+  if (tag === "PlatformError")
+    return "Could not save the model. Check free disk space, then try again.";
+  if (tag === "HttpError")
+    return "Could not reach the download server. Check the connection, then try again.";
+  return "The download failed. Try again.";
 };
 
 export const make = Effect.fn("TextToSpeech.make")(function* (
@@ -120,13 +128,12 @@ export const make = Effect.fn("TextToSpeech.make")(function* (
       // config.json sits at the model root that transformers.js reads from.
       Effect.map((installed) => path.dirname(installed[0]!)),
       Effect.mapError((cause) => new TextToSpeechError({ operation: "download", cause })),
-      Effect.onExit((exit) =>
-        Effect.sync(() => {
-          if (transfer === current) transfer = undefined;
-          if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause))
-            failure = describe(exit.cause);
-        }),
-      ),
+      Effect.onExit((exit) => {
+        if (transfer === current) transfer = undefined;
+        if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return Effect.void;
+        failure = describe(exit.cause);
+        return Effect.logWarning("voice model download failed", { cause: exit.cause });
+      }),
       Effect.forkIn(scope),
       Effect.tap((fiber) => Deferred.succeed(current.fiber, fiber)),
     );
