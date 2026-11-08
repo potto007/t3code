@@ -86,6 +86,11 @@ export function useVoiceCall(input: {
   const start = useStableCallback(async () => {
     if (input.disabled || starting || !threadRef) return;
     if (blocker?.kind === "setup") {
+      toastManager.add({
+        type: "info",
+        title: "Choose where to transcribe first",
+        description: `A voice call transcribes you on ${threadEnvironment?.label ?? "the thread's environment"}. Choose it under Transcribe with.`,
+      });
       await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
       return;
     }
