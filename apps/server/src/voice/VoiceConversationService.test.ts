@@ -248,6 +248,10 @@ const harness = Effect.fn("test.voiceCall.harness")(function* (name: string, rep
     TextToSpeech.TextToSpeech.of({
       sampleRate: 24_000,
       hold: hold("tts"),
+      model: Effect.die("unused"),
+      download: Effect.die("unused"),
+      cancelDownload: Effect.die("unused"),
+      remove: Effect.die("unused"),
       synthesize: (text) =>
         Stream.fromIterable(splitSentences(text)).pipe(
           Stream.tap((sentence) => Queue.offer(synthesized, sentence)),

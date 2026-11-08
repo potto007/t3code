@@ -1,5 +1,10 @@
+import type { EnvironmentVoiceTtsModel } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as RcRef from "effect/RcRef";
@@ -21,12 +26,14 @@ import * as SpeechModelStore from "./SpeechModelStore.ts";
 export class TextToSpeechError extends Schema.TaggedError<TextToSpeechError>()(
   "TextToSpeechError",
   {
-    operation: Schema.Literals(["download", "load", "synthesize"]),
-    cause: Schema.Defect(),
+    operation: Schema.Literals(["download", "load", "synthesize", "remove"]),
+    detail: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Speech synthesis failed to ${this.operation}.`;
+    const base = `Speech synthesis failed to ${this.operation}.`;
+    return this.detail ? `${base} ${this.detail}` : base;
   }
 }
 
@@ -41,11 +48,28 @@ export class TextToSpeech extends Context.Service<
       text: string,
       voice?: string,
     ) => Stream.Stream<Float32Array, TextToSpeechError>;
+    readonly model: Effect.Effect<EnvironmentVoiceTtsModel>;
+    /** Completes once the model is installed; progress shows in `model` meanwhile. */
+    readonly download: Effect.Effect<EnvironmentVoiceTtsModel, TextToSpeechError>;
+    readonly cancelDownload: Effect.Effect<EnvironmentVoiceTtsModel>;
+    /** A call already speaking keeps its loaded voice; the next one needs a new download. */
+    readonly remove: Effect.Effect<EnvironmentVoiceTtsModel, TextToSpeechError>;
   }
 >()("t3/speech/TextToSpeech") {}
 
 /** Kokoro's worker holds about 0.9 GiB, so it goes once nothing has spoken for a while. */
 const IDLE_UNLOAD = "5 minutes";
+
+const KOKORO_NAME = "Kokoro 82M";
+const KOKORO_SIZE = KOKORO_MODEL_FILES.reduce((total, file) => total + file.size, 0);
+
+const isTextToSpeechError = Schema.is(TextToSpeechError);
+
+const describe = (cause: Cause.Cause<TextToSpeechError>) => {
+  const error = Cause.squash(cause);
+  const inner = isTextToSpeechError(error) ? error.cause : error;
+  return inner instanceof Error ? inner.message : String(inner);
+};
 
 export const make = Effect.fn("TextToSpeech.make")(function* (
   load: (
@@ -58,16 +82,70 @@ export const make = Effect.fn("TextToSpeech.make")(function* (
   const store = yield* SpeechModelStore.SpeechModelStore;
   const voicePack = yield* VoicePack.VoicePack;
   const path = yield* Path.Path;
+  const scope = yield* Effect.scope;
+  type Transfer = {
+    downloaded: number;
+    verifying: boolean;
+    readonly fiber: Deferred.Deferred<Fiber.Fiber<string, TextToSpeechError>>;
+  };
+  let transfer: Transfer | undefined;
+  let failure: string | undefined;
+  // Settings and a call's first acquire share one transfer.
+  const transferFiber = Effect.suspend(() => {
+    if (transfer) return Deferred.await(transfer.fiber);
+    const current: Transfer = { downloaded: 0, verifying: false, fiber: Deferred.makeUnsafe() };
+    transfer = current;
+    failure = undefined;
+    let finished = 0;
+    return Effect.forEach(KOKORO_MODEL_FILES, (file) =>
+      store
+        .download(file, {
+          onProgress: (downloaded) => {
+            current.downloaded = finished + downloaded;
+          },
+          onVerificationStart: () => {
+            current.verifying = true;
+          },
+        })
+        .pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              finished += file.size;
+              current.downloaded = finished;
+              current.verifying = false;
+            }),
+          ),
+        ),
+    ).pipe(
+      // config.json sits at the model root that transformers.js reads from.
+      Effect.map((installed) => path.dirname(installed[0]!)),
+      Effect.mapError((cause) => new TextToSpeechError({ operation: "download", cause })),
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          if (transfer === current) transfer = undefined;
+          if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause))
+            failure = describe(exit.cause);
+        }),
+      ),
+      Effect.forkIn(scope),
+      Effect.tap((fiber) => Deferred.succeed(current.fiber, fiber)),
+    );
+  });
+  const install = Effect.fn("TextToSpeech.install")(function* () {
+    const exit = yield* Fiber.await(yield* transferFiber);
+    if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause))
+      return yield* new TextToSpeechError({
+        operation: "download",
+        detail: "The download was cancelled.",
+      });
+    return yield* exit;
+  });
   const acquire = Effect.fn("TextToSpeech.acquire")(function* () {
     // Held for the worker's life, so an upgrade never deletes files it has loaded.
     const pack = yield* voicePack.use.pipe(
       Effect.mapError((cause) => new TextToSpeechError({ operation: "load", cause })),
     );
-    const installed = yield* Effect.forEach(KOKORO_MODEL_FILES, (file) =>
-      store.download(file),
-    ).pipe(Effect.mapError((cause) => new TextToSpeechError({ operation: "download", cause })));
-    // config.json sits at the model root that transformers.js reads from.
-    const directory = path.dirname(installed[0]!);
+    const directory = yield* install();
     return yield* Effect.tryPromise({
       try: (signal) => load(directory, signal, pack),
       catch: (cause) => new TextToSpeechError({ operation: "load", cause }),
@@ -87,7 +165,50 @@ export const make = Effect.fn("TextToSpeech.make")(function* (
       catch: (cause) => new TextToSpeechError({ operation: "synthesize", cause }),
     });
   });
+  const model = Effect.fn("TextToSpeech.model")(function* () {
+    const ready = yield* Effect.forEach(KOKORO_MODEL_FILES, (file) => store.isReady(file), {
+      concurrency: "unbounded",
+    });
+    const current = transfer;
+    return {
+      name: KOKORO_NAME,
+      size: KOKORO_SIZE,
+      state: current
+        ? current.verifying
+          ? "verifying"
+          : "downloading"
+        : ready.every(Boolean)
+          ? "installed"
+          : "downloadable",
+      ...(current ? { downloaded: current.downloaded } : {}),
+      ...(failure === undefined || current ? {} : { error: failure }),
+    } satisfies EnvironmentVoiceTtsModel;
+  });
+  const cancel = Effect.suspend(() =>
+    transfer ? Deferred.await(transfer.fiber).pipe(Effect.flatMap(Fiber.interrupt)) : Effect.void,
+  );
+  const download = Effect.fn("TextToSpeech.download")(function* () {
+    yield* install();
+    return yield* model();
+  });
+  const cancelDownload = Effect.fn("TextToSpeech.cancelDownload")(function* () {
+    yield* cancel;
+    return yield* model();
+  });
+  const remove = Effect.fn("TextToSpeech.remove")(function* () {
+    yield* cancel;
+    failure = undefined;
+    yield* RcRef.invalidate(speaker);
+    yield* Effect.forEach(KOKORO_MODEL_FILES, (file) => store.remove(file)).pipe(
+      Effect.mapError((cause) => new TextToSpeechError({ operation: "remove", cause })),
+    );
+    return yield* model();
+  });
   return TextToSpeech.of({
+    model: model(),
+    download: download(),
+    cancelDownload: cancelDownload(),
+    remove: remove(),
     sampleRate: KOKORO_SAMPLE_RATE,
     hold: RcRef.get(speaker).pipe(Effect.asVoid, Effect.withSpan("TextToSpeech.hold")),
     synthesize: (text, voice = KOKORO_DEFAULT_VOICE) =>

@@ -34,6 +34,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as FrontModel from "../voice/FrontModel.ts";
 import * as VoicePack from "../voice/pack/VoicePack.ts";
 import { speechHttpApiLayer } from "./http.ts";
+import * as TextToSpeech from "./TextToSpeech.ts";
 
 const decodeSessionId = Schema.decodeUnknownSync(AuthSessionId);
 
@@ -53,6 +54,7 @@ const dependencies = Layer.mergeAll(
   Layer.mock(CloudSpeech.CloudSpeech)({}),
   Layer.mock(FrontModel.FrontModel)({}),
   Layer.mock(VoicePack.VoicePack)({}),
+  Layer.mock(TextToSpeech.TextToSpeech)({ sampleRate: 24_000 }),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
     getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -117,6 +119,10 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
         }),
       );
       expect(removeFront.status).toBe(403);
+      const removeVoice = yield* Effect.promise(() =>
+        fetch(new URL("tts-model/remove", url), { method: "POST" }),
+      );
+      expect(removeVoice.status).toBe(403);
       const changeKey = yield* Effect.promise(() =>
         fetch(new URL("cloud/xai/key", url), {
           method: "POST",

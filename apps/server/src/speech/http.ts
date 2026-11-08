@@ -23,6 +23,7 @@ import {
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as SpeechService from "./SpeechService.ts";
+import * as TextToSpeech from "./TextToSpeech.ts";
 import * as FrontModel from "../voice/FrontModel.ts";
 import * as VoicePack from "../voice/pack/VoicePack.ts";
 
@@ -65,6 +66,13 @@ const mapFrontModelError = <A, R>(
     }),
   );
 
+const mapTextToSpeechError = <A, R>(effect: Effect.Effect<A, TextToSpeech.TextToSpeechError, R>) =>
+  effect.pipe(
+    Effect.catchTags({
+      TextToSpeechError: (error) => failEnvironmentInternal("internal_error", error),
+    }),
+  );
+
 const mapVoicePackError = <A, R>(effect: Effect.Effect<A, VoicePack.VoicePackError, R>) =>
   effect.pipe(
     Effect.catchTags({
@@ -81,6 +89,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
     const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
     const frontModel = yield* FrontModel.FrontModel;
     const voicePack = yield* VoicePack.VoicePack;
+    const tts = yield* TextToSpeech.TextToSpeech;
     const guard = Effect.fnUntraced(function* (
       endpoint: string,
       scope: AuthEnvironmentScope = AuthOrchestrationOperateScope,
@@ -211,6 +220,34 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.removeFrontModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
           return yield* frontModel.remove(args.payload.modelId).pipe(mapFrontModelError);
+        }),
+      )
+      .handle(
+        "ttsModel",
+        Effect.fn("environment.voice.ttsModel")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* tts.model;
+        }),
+      )
+      .handle(
+        "downloadTtsModel",
+        Effect.fn("environment.voice.downloadTtsModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* tts.download.pipe(mapTextToSpeechError);
+        }),
+      )
+      .handle(
+        "cancelTtsModelDownload",
+        Effect.fn("environment.voice.cancelTtsModelDownload")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* tts.cancelDownload;
+        }),
+      )
+      .handle(
+        "removeTtsModel",
+        Effect.fn("environment.voice.removeTtsModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* tts.remove.pipe(mapTextToSpeechError);
         }),
       )
       .handle(
