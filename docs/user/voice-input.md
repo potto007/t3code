@@ -160,6 +160,10 @@ skip it. If the GPU build fails its check after download, calls run on the CPU
 and the row says so. The pack includes [eSpeak NG](https://github.com/espeak-ng/espeak-ng),
 licensed GPL-3.0-or-later.
 
+Calls also need the **Voice model** (about 330 MB) that speaks for the call.
+Download it in the same section; starting a call without it opens that row, which
+shows the download's progress and, if it failed, why.
+
 Under **Settings → Voice → Conversation**, pick the **Voice**, when to **Hang up
 when quiet**, and the **Conversation model**: download a managed model there
 before your first call (the larger one needs a GPU to answer quickly), or point
