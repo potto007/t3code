@@ -537,6 +537,9 @@ function scorePaletteItem(
   return match && (item.title === terms[0] ? match : { ...match, ranges: [] });
 }
 
+const isActionGroup = (group: CommandPaletteGroup) =>
+  group.value === "actions" || group.value === "voice-call";
+
 /**
  * Equal match classes put commands before threads, so "new" runs "New thread".
  * Server message matches stay in a final group so late results cannot move earlier rows.
@@ -573,15 +576,13 @@ export function filterCommandPaletteGroups(input: {
   const normalizedQuery = foldSearchQuery(searchQuery);
 
   if (normalizedQuery.length === 0) {
-    if (isActionsFilter) {
-      return input.activeGroups.filter((group) => group.value === "actions");
-    }
+    if (isActionsFilter) return input.activeGroups.filter(isActionGroup);
     return [...input.activeGroups];
   }
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
-    baseGroups = baseGroups.filter((group) => group.value === "actions");
+    baseGroups = baseGroups.filter(isActionGroup);
   } else if (!input.isInSubmenu) {
     baseGroups = baseGroups.filter((group) => group.value !== "recent-threads");
   }
@@ -762,9 +763,14 @@ export function getCommandPaletteMode(input: {
 
 export function buildRootGroups(input: {
   actionItems: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
+  /** A live call's controls; at most three, so the per-group cap never splits Confirm and Cancel. */
+  callItems?: ReadonlyArray<CommandPaletteActionItem>;
   recentThreadItems: ReadonlyArray<CommandPaletteActionItem>;
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
+  if (input.callItems && input.callItems.length > 0) {
+    groups.push({ value: "voice-call", label: "Voice call", items: input.callItems });
+  }
   if (input.actionItems.length > 0) {
     groups.push({ value: "actions", label: "Actions", items: input.actionItems });
   }

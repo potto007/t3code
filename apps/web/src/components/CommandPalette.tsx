@@ -1323,9 +1323,10 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  const callItems: CommandPaletteActionItem[] = [];
   if (activeVoiceCall) {
     const { call } = activeVoiceCall;
-    actionItems.push({
+    callItems.push({
       kind: "action",
       value: "action:stop-voice-call",
       title: "Stop voice call",
@@ -1335,7 +1336,7 @@ function OpenCommandPaletteDialog(props: {
       run: async () => call.stop(),
     });
     if (activeVoiceCall.state.confirm) {
-      actionItems.push(
+      callItems.push(
         {
           kind: "action",
           value: "action:confirm-voice-call-request",
@@ -1740,7 +1741,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
+  const rootGroups = buildRootGroups({ actionItems, callItems, recentThreadItems });
   // Every setting goes to the palette's own matcher, so settings get the same
   // word starts and typo tolerance as threads.
   const settingsSearchItems: CommandPaletteActionItem[] = settingsForThisPlatform(

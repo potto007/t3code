@@ -5,6 +5,7 @@ import { makeThreadFixture } from "../test-fixtures";
 import {
   newThreadNoProjectIndex,
   buildNestedSearchItems,
+  buildRootGroups,
   resolveCommandPaletteProject,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
@@ -400,6 +401,52 @@ describe("buildThreadActionItems", () => {
     ]);
     expect(labels("up")).toEqual(["Actions", "Threads"]);
     expect(labels("pnpm up")).toEqual(["Threads"]);
+  });
+
+  it("lists a voice call's controls together when threads also match", () => {
+    const action = (value: string, title: string, searchTerms: string[] = [title]) => ({
+      kind: "action" as const,
+      value,
+      searchTerms,
+      title,
+      icon: null,
+      run: async () => undefined,
+    });
+    const activeGroups = buildRootGroups({
+      actionItems: [
+        action("action:new-thread", "New thread in voice demo"),
+        action("action:voice-settings", "Open voice settings"),
+      ],
+      callItems: [
+        action("action:stop-voice-call", "Stop voice call", ["voice", "call", "stop"]),
+        action("action:confirm-voice-call-request", "Confirm voice call request", ["voice"]),
+        action("action:cancel-voice-call-request", "Cancel voice call request", ["voice"]),
+      ],
+      recentThreadItems: [],
+    });
+    const threadSearchItems = buildThreadActionItems({
+      threads: [makeThread({ title: "Voice check-in" })],
+      projectByKey: new Map(),
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const listed = (query: string) =>
+      filterCommandPaletteGroups({
+        activeGroups,
+        query,
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems,
+      }).flatMap((group) => group.items.map((item) => item.value));
+
+    for (const query of ["voice", "request", ">voice"]) {
+      expect(listed(query), query).toEqual(
+        expect.arrayContaining([
+          "action:confirm-voice-call-request",
+          "action:cancel-voice-call-request",
+        ]),
+      );
+    }
   });
 
   it("runs the command for its whole name over a thread with that title, and lists the open thread last", () => {
