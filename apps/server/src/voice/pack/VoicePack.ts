@@ -322,6 +322,8 @@ export const make = Effect.fn("VoicePack.make")(function* (options: VoicePackOpt
     // A transfer shows its own plan, an install what it holds, otherwise what a click would fetch.
     const plan: VoicePackPlan = current?.plan ?? (done ? { ...auto, ...done.marker } : auto);
     const files = selectVoicePackFiles(plan, manifest);
+    // Apple Silicon has only the Metal build, so a CPU pick would fetch the same pack.
+    const cpu = chooseVoicePackPlan(facts, "cpu");
     return {
       supported: true,
       state: current
@@ -334,11 +336,8 @@ export const make = Effect.fn("VoicePack.make")(function* (options: VoicePackOpt
       variant: plan.variant,
       size: files.packageBytes + files.wheelBytes,
       ...(files.wheelBytes > 0 ? { cudaRuntimeSize: files.wheelBytes } : {}),
-      ...(plan.variant !== "cpu"
-        ? {
-            cpuSize: selectVoicePackFiles(chooseVoicePackPlan(facts, "cpu")!, manifest)
-              .packageBytes,
-          }
+      ...(plan.variant !== "cpu" && cpu?.variant === "cpu"
+        ? { cpuSize: selectVoicePackFiles(cpu, manifest).packageBytes }
         : {}),
       ...(current ? { downloaded: [...current.progress.values()].reduce((a, b) => a + b, 0) } : {}),
       ...(done?.marker.gpu ? { gpu: done.marker.gpu } : {}),

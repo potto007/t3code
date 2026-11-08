@@ -146,6 +146,17 @@ it.layer(services)("VoicePack", (it) => {
     }),
   );
 
+  it.effect("offers no CPU download where the GPU build is the only one", () =>
+    Effect.gen(function* () {
+      const pack = yield* open({
+        detect: async () => ({ ...host, platform: "darwin", arch: "arm64", nvidiaDriver: null }),
+      });
+      const status = yield* pack.status;
+      expect(status).toMatchObject({ supported: true, variant: "metal" });
+      expect(status.cpuSize).toBeUndefined();
+    }),
+  );
+
   it.effect("rejects a tarball whose sha512 differs before extracting anything", () =>
     Effect.gen(function* () {
       const [first, ...rest] = manifest.packages;
