@@ -411,7 +411,7 @@ const make = Effect.gen(function* () {
             Effect.exit,
           );
         if (commit) yield* Deferred.await(commit);
-        const decision = holdOutwardRequest(yield* answer, userWords(inputs));
+        const decision = holdOutwardRequest(yield* answer, userWords(inputs), runs.size > 0);
         // Committed before acting, so a barge-in from here on no longer takes the turn back.
         history.commit(inputs, decision);
         thinking = undefined;

@@ -68,12 +68,17 @@ export function isOutwardRequest(text: string) {
 }
 
 /**
- * A reply or silence to words that ask for outward work leaves the user believing it was sent,
- * or drops it. Held as a delegation instead, it waits for a spoken yes like any outward request.
+ * A reply, silence, or a note with no run to steer sends nothing now, so for words that ask for
+ * outward work it would leave the user believing it was sent, or drop it. Held as a delegation
+ * instead, it waits for a spoken yes like any outward request.
  */
-export function holdOutwardRequest(decision: FrontDecision, said: string): FrontDecision {
-  if (decision.action === "delegate" || decision.action === "note" || !isOutwardRequest(said))
-    return decision;
+export function holdOutwardRequest(
+  decision: FrontDecision,
+  said: string,
+  steering: boolean,
+): FrontDecision {
+  const sends = decision.action === "delegate" || (decision.action === "note" && steering);
+  if (sends || !isOutwardRequest(said)) return decision;
   return { action: "delegate", speech: "", task: said, outward: true };
 }
 

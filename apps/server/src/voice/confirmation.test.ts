@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   classifyAnswer,
   confirmationReadback,
+  holdOutwardRequest,
   isOutwardRequest,
   startConfirmation,
   stepConfirmation,
@@ -53,6 +54,27 @@ describe("isOutwardRequest", () => {
     ["mm-hm", false],
   ])("%s -> %s", (text, outward) => {
     expect(isOutwardRequest(text)).toBe(outward);
+  });
+});
+
+describe("holdOutwardRequest", () => {
+  const held = { action: "delegate", speech: "", task: "push this branch", outward: true };
+  const note = { action: "note", speech: "Note: the user wants a push.", task: "Push." } as const;
+  it.each([
+    ["a reply claiming the work", { action: "reply", speech: "Pushed." } as const, false, held],
+    ["silence", { action: "none", speech: "" } as const, false, held],
+    // With no run to steer, a note only waits for the next request: it sends nothing now.
+    ["a note with nothing running", note, false, held],
+    ["a note steering a run", note, true, note],
+  ])("holds %s", (_, decision, steering, expected) => {
+    expect(holdOutwardRequest(decision, "push this branch", steering)).toEqual(expected);
+  });
+
+  it("leaves a delegation and local words alone", () => {
+    const delegation = { action: "delegate", speech: "On it.", task: "Push." } as const;
+    expect(holdOutwardRequest(delegation, "push this branch", false)).toBe(delegation);
+    const reply = { action: "reply", speech: "Sure." } as const;
+    expect(holdOutwardRequest(reply, "run the tests", false)).toBe(reply);
   });
 });
 
